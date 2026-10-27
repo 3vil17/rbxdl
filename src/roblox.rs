@@ -1,0 +1,213 @@
+use crate::error::{Error, Result};
+use serde::Serialize;
+use serde_json::Value;
+
+const UA: &str = "Roblox/WinInet";
+
+#[derive(Clone)]
+pub struct Roblox {
+    http: reqwest::Client,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AssetDetails {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub asset_type_id: i64,
+    pub creator_type: String,
+    pub creator_id: i64,
+    pub creator_name: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct CookieInfo {
+    pub alive: bool,
+    pub user_id: Option<i64>,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub robux: Option<i64>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct PlaceRef {
+    pub place_id: i64,
+    pub name: String,
+}
+
+impl Roblox {
+    pub fn new() -> Self {
+        let http = reqwest::Client::builder()
+            .user_agent(UA)
+            .gzip(true)
+            .build()
+            .expect("http client");
+        Self { http }
+    }
+
+    /// Public catalog metadata, no auth required.
+    pub async fn asset_details(&self, id: i64) -> Result<AssetDetails> {
+        let url = format!("https://economy.roblox.com/v2/assets/{id}/details");
+        let v: Value = self.http.get(&url).send().await?.json().await?;
+        if v.get("errors").is_some() {
+            return Err(Error::Other(format!("asset {id} has no public details")));
+        }
+        let creator = v.get("Creator").cloned().unwrap_or(Value::Null);
+        Ok(AssetDetails {
+            id,
+            name: v["Name"].as_str().unwrap_or("Unknown").to_string(),
+            description: v["Description"].as_str().unwrap_or("").to_string(),
+            asset_type_id: v["AssetTypeId"].as_i64().unwrap_or(0),
+            creator_type: creator["CreatorType"].as_str().unwrap_or("User").to_string(),
+            creator_id: creator["CreatorTargetId"].as_i64().unwrap_or(0),
+            creator_name: creator["Name"].as_str().unwrap_or("Unknown").to_string(),
+        })
+    }
+
+    pub async fn thumbnail_url(&self, id: i64) -> Option<String> {
+        let url = format!(
+            "https://thumbnails.roblox.com/v1/assets?assetIds={id}&size=420x420&format=Png"
+        );
+        let v: Value = self.http.get(&url).send().await.ok()?.json().await.ok()?;
+        v["data"][0]["imageUrl"].as_str().map(|s| s.to_string())
+    }
+
+    /// Check whether a .ROBLOSECURITY cookie is still valid, and who it belongs to.
+    pub async fn cookie_info(&self, cookie: &str) -> CookieInfo {
+        let auth = self
+            .http
+            .get("https://users.roblox.com/v1/users/authenticated")
+            .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+            .send()
+            .await;
+        let v = match auth {
+            Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+            _ => None,
+        };
+        let Some(v) = v else {
+            return CookieInfo { alive: false, user_id: None, username: None, display_name: None, robux: None };
+        };
+        let user_id = v["id"].as_i64();
+        let robux = self
+            .http
+            .get("https://economy.roblox.com/v1/user/currency")
+            .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+            .send()
+            .await
+            .ok();
+        let robux = match robux {
+            Some(r) if r.status().is_success() => {
+                r.json::<Value>().await.ok().and_then(|j| j["robux"].as_i64())
+            }
+            _ => None,
+        };
+        CookieInfo {
+            alive: true,
+            user_id,
+            username: v["name"].as_str().map(|s| s.to_string()),
+            display_name: v["displayName"].as_str().map(|s| s.to_string()),
+            robux,
+        }
+    }
+
+    /// Places owned by a user or group, used as place-id authorization candidates.
+    pub async fn list_creator_places(&self, creator_type: &str, creator_id: i64) -> Vec<PlaceRef> {
+        let base = if creator_type.eq_ignore_ascii_case("Group") {
+            format!("https://games.roblox.com/v2/groups/{creator_id}/games")
+        } else {
+            format!("https://games.roblox.com/v2/users/{creator_id}/games")
+        };
+        let mut out = Vec::new();
+        let mut cursor = String::new();
+        for _ in 0..4 {
+            let url = format!("{base}?accessFilter=Public&limit=50&sortOrder=Asc&cursor={cursor}");
+            let Ok(resp) = self.http.get(&url).send().await else { break };
+            let Ok(v) = resp.json::<Value>().await else { break };
+            if let Some(items) = v["data"].as_array() {
+                for it in items {
+                    let place_id = it["rootPlaceId"]
+                        .as_i64()
+                        .or_else(|| it["rootPlace"]["id"].as_i64())
+                        .or_else(|| it["id"].as_i64());
+                    if let Some(place_id) = place_id {
+                        out.push(PlaceRef {
+                            place_id,
+                            name: it["name"].as_str().unwrap_or("game").to_string(),
+                        });
+                    }
+                }
+            }
+            match v["nextPageCursor"].as_str() {
+                Some(c) if !c.is_empty() => cursor = c.to_string(),
+                _ => break,
+            }
+            if out.len() >= 60 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Open Cloud route: API-key auth. Returns the raw asset bytes.
+    pub async fn fetch_opencloud(&self, api_key: &str, id: i64) -> Result<Vec<u8>> {
+        let url = format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{id}");
+        let resp = self
+            .http
+            .get(&url)
+            .header("x-api-key", api_key)
+            .header("Accept-Encoding", "gzip")
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(Error::NotAuthorized);
+        }
+        let v: Value = resp.json().await?;
+        let location = v["location"]
+            .as_str()
+            .or_else(|| v["locations"][0]["location"].as_str())
+            .ok_or(Error::NotAuthorized)?;
+        let bytes = self.http.get(location).send().await?.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Cookie route on assetdelivery. `place_id` supplies the authorization context.
+    pub async fn fetch_cookie(
+        &self,
+        cookie: &str,
+        id: i64,
+        place_id: Option<i64>,
+    ) -> Result<Vec<u8>> {
+        let url = format!("https://assetdelivery.roblox.com/v1/asset/?id={id}");
+        let mut req = self
+            .http
+            .get(&url)
+            .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+            .header("Accept-Encoding", "gzip");
+        if let Some(pid) = place_id {
+            req = req.header("Roblox-Place-Id", pid.to_string());
+        }
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Err(Error::NotAuthorized);
+        }
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let bytes = resp.bytes().await?.to_vec();
+        // A JSON error body can come back with a 200, so inspect it.
+        if ct.contains("json") || bytes.starts_with(b"{\"errors\"") {
+            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                if v.get("errors").is_some() {
+                    return Err(Error::NotAuthorized);
+                }
+            }
+        }
+        if bytes.is_empty() {
+            return Err(Error::NotAuthorized);
+        }
+        Ok(bytes)
+    }
+}

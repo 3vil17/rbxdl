@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rbxdl</title>
+<link rel="icon" type="image/png" href="/logo.png" />
+<style>
+  @import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap");
+  :root {
+    color-scheme: dark;
+    --font-sans: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --green: #3bea57;
+    --red: #ec3b47;
+    --link: #2ba2f1;
+    --card-bg: rgba(28, 30, 32, 0.75);
+    --card-border: rgba(255, 255, 255, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html {
+    background: rgb(22, 22, 22);
+    min-height: 100%;
+    font-family: var(--font-sans);
+    color: rgb(212, 212, 212);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  }
+  html::-webkit-scrollbar { width: 6px; }
+  html::-webkit-scrollbar-track { background: transparent; }
+  html::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 99px; }
+  html::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
+  body {
+    margin: 0; padding: 40px 16px; box-sizing: border-box; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; position: relative;
+  }
+  /* faint rotated dot texture */
+  body::before {
+    content: ""; position: fixed; inset: -50%; width: 200%; height: 200%;
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 22px 22px; transform: rotate(15deg); pointer-events: none; z-index: 1;
+  }
+  a:link, a:visited { color: var(--link); font-weight: 500; text-decoration: none; }
+  a:hover { opacity: 0.8; }
+
+  .stack {
+    display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+    width: 100%; max-width: 760px; position: relative; z-index: 2;
+  }
+
+  /* RDD gradient-border card */
+  .card {
+    background: linear-gradient(var(--card-bg), var(--card-bg)) padding-box,
+      linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 100%) border-box;
+    border: 1px solid transparent;
+    backdrop-filter: blur(14px);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .hdr { padding: 16px 18px 14px; }
+  .titlebar { display: flex; align-items: center; gap: 11px; }
+  .logo { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.1); }
+  .hdr .title { margin: 0; font-size: 0.95rem; font-weight: 600; color: #fff; }
+  .hdr .title b { color: var(--green); font-weight: 600; }
+  .title-sub { color: rgb(136, 136, 136); font-weight: 400; margin-left: 4px; }
+  .notice { margin: 7px 0 0; }
+  .notice p { margin: 0; font-size: 0.8rem; line-height: 1.7; color: rgb(136, 136, 136); }
+  .notice .ic { width: 13px; height: 13px; stroke: rgb(136,136,136); fill: none; stroke-width: 1.8;
+    display: inline; vertical-align: middle; margin-right: 5px; position: relative; top: -1px; }
+  .notice .g { color: var(--green); }
+
+  nav { display: flex; gap: 6px; margin-top: 12px; }
+  nav button {
+    appearance: none; font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgb(170, 170, 170); padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    transition: 0.2s;
+  }
+  nav button:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255,255,255,0.18); color: #fff; }
+  nav button.active { background: rgba(255, 255, 255, 0.12); border-color: rgba(255,255,255,0.2); color: #fff; }
+
+  h2.sect { margin: 0 0 12px; font-size: 0.85rem; font-weight: 600; color: rgb(170, 170, 170); }
+
+  .fgrid { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; align-items: center; }
+  .fgrid label { font-size: 0.78rem; color: rgb(144, 144, 144); white-space: nowrap; }
+  .frow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .frow input { flex: 1 1 0; min-width: 0; max-width: none !important; }
+
+  .sep { height: 1px; background: var(--card-border); margin: 16px 0; }
+
+  input[type="text"], input[type="password"] {
+    background: rgb(22, 22, 22); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 6px;
+    color: rgb(224, 224, 224); font-family: var(--font-sans); font-size: 13px; font-weight: 400;
+    padding: 7px 12px; outline: none; box-sizing: border-box; width: 100%;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  input:hover { border-color: rgba(255, 255, 255, 0.2); }
+  input:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
+  input::placeholder { color: rgb(85, 85, 85); }
+
+  .btn {
+    appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
+    color: rgb(212, 212, 212); font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    padding: 7px 14px; cursor: pointer; white-space: nowrap; transition: 0.2s;
+  }
+  .btn:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.18); color: #fff; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  .fbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .fbtns .btn { flex: 1 1 0; }
+
+  .hint { font-size: 0.68rem; color: rgb(85, 85, 85); margin: 8px 0 0; line-height: 1.6; }
+  .hint code, code.chip {
+    background: rgba(255, 255, 255, 0.07); border-radius: 4px; padding: 1px 5px;
+    font-family: monospace; font-size: 0.8em; color: rgb(212, 212, 212);
+  }
+
+  .result { display: none; }
+  .asset { display: flex; gap: 14px; align-items: center; }
+  .thumb {
+    width: 68px; height: 68px; border-radius: 6px; background: rgb(22, 22, 22);
+    border: 1px solid rgba(255, 255, 255, 0.09); object-fit: cover; flex-shrink: 0;
+  }
+  .asset-name { font-size: 0.95rem; font-weight: 500; color: rgb(224, 224, 224); }
+  .asset-meta { font-size: 0.78rem; color: rgb(136, 136, 136); margin-top: 2px; }
+  .badge {
+    display: inline-block; font-size: 0.63rem; font-family: monospace; margin-top: 7px;
+    padding: 2px 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.05); color: rgb(136, 136, 136);
+  }
+
+  .note { display: none; margin-top: 14px; padding: 9px 12px; border-radius: 6px; font-size: 0.78rem; line-height: 1.6; word-break: break-word; }
+  .note.show { display: block; }
+  .note.info { background: rgba(255, 255, 255, 0.04); color: rgb(136, 136, 136); }
+  .note.ok   { background: rgba(59, 234, 87, 0.1); color: rgb(59, 186, 87); }
+  .note.err  { background: rgba(236, 59, 71, 0.12); color: rgb(208, 96, 112); }
+  .note code { color: rgb(212, 212, 212); font-family: monospace; font-size: 0.75rem; }
+  .note b { color: rgb(224, 224, 224); font-weight: 500; }
+  .note .acts { margin-top: 9px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .dot.on { background: var(--green); } .dot.off { background: var(--red); }
+
+  .usage { font-size: 0.83rem; line-height: 1.7; color: rgb(170, 170, 170); }
+  .usage ul { margin: 0; padding-left: 18px; }
+  .usage li { margin-bottom: 4px; }
+  .usage li::marker { color: rgb(102, 102, 102); }
+  .usage strong { color: rgb(212, 212, 212); font-weight: 500; }
+
+  .section-head { display: flex; justify-content: space-between; align-items: center; }
+  .hist-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--card-border); font-size: 0.8rem; }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-main { flex: 1; min-width: 0; }
+  .hist-name { font-weight: 500; color: rgb(224, 224, 224); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-name span { color: rgb(102, 102, 102); font-weight: 400; }
+  .hist-sub { color: rgb(136, 136, 136); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: rgb(102, 102, 102); text-align: center; padding: 18px 0; font-size: 0.82rem; }
+
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.25);
+    border-top-color: var(--green); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 600px) {
+    body { padding: 16px 12px; }
+    .fgrid { grid-template-columns: 1fr; gap: 4px 0; }
+    .fgrid label { margin-top: 10px; }
+    .fbtns { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div class="card hdr">
+      <div class="titlebar">
+        <img class="logo" src="/logo.png" alt="" />
+        <p class="title">rbx<b>dl</b> <span class="title-sub">Roblox asset downloader</span></p>
+      </div>
+      <div class="notice">
+        <p>
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01" stroke-linecap="round"/></svg>
+          Runs <span class="g">locally</span>. Credentials are stored in Windows Credential Manager and never leave this machine.
+        </p>
+      </div>
+      <nav>
+        <button data-tab="download" class="active">Download</button>
+        <button data-tab="settings">Settings</button>
+        <button data-tab="history">History</button>
+      </nav>
+    </div>
+
+    <!-- DOWNLOAD -->
+    <section id="tab-download" style="display:flex; flex-direction:column; gap:10px;">
+      <div class="card">
+        <div class="fgrid">
+          <label>Asset ID / URL</label>
+          <div class="frow">
+            <input id="asset-input" type="text" placeholder="1818 or a roblox.com asset link"
+                   autocomplete="off" spellcheck="false" />
+            <button class="btn" id="fetch-btn">Fetch</button>
+          </div>
+        </div>
+        <p class="hint">Paste an id or any catalog / library / create URL.</p>
+
+        <div class="result" id="result">
+          <div class="sep"></div>
+          <div class="asset">
+            <img class="thumb" id="r-thumb" alt="" />
+            <div style="min-width:0">
+              <div class="asset-name" id="r-name"></div>
+              <div class="asset-meta" id="r-meta"></div>
+              <span class="badge" id="r-type"></span>
+            </div>
+          </div>
+          <div class="fbtns">
+            <button class="btn" id="download-btn">
+              <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Download
+            </button>
+          </div>
+        </div>
+
+        <div class="note" id="dl-note"></div>
+      </div>
+
+      <div class="card usage">
+        <h2 class="sect">Usage</h2>
+        <ul>
+          <li>Enter an <strong>asset id</strong> or paste any Roblox URL, then <strong>Fetch</strong> to preview it.</li>
+          <li><strong>Download</strong> walks the authorization ladder: Open Cloud key, then direct cookie, then the creator's own places as a place-id context.</li>
+          <li>Files save to your download folder (set in <strong>Settings</strong>); every download is kept in <strong>History</strong>.</li>
+          <li>Decals and images that resolve to an XML descriptor are followed once to the real image.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" style="display:none; flex-direction:column; gap:10px;">
+      <div class="card">
+        <h2 class="sect">Credentials</h2>
+        <div class="fgrid">
+          <label>API key</label>
+          <div class="frow"><input id="api-key" type="password" placeholder="Open Cloud key" autocomplete="off" /></div>
+          <label>Cookie</label>
+          <div class="frow"><input id="cookie" type="password" placeholder=".ROBLOSECURITY" autocomplete="off" /></div>
+        </div>
+        <div class="fbtns">
+          <button class="btn" id="save-creds">Save credentials</button>
+          <button class="btn" id="check-cookie">Check cookie</button>
+        </div>
+        <p class="hint">API key scope <code>legacy-asset:manage</code>. Leave a field blank to keep its current value.</p>
+        <div class="note" id="cookie-note"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="sect">Download folder</h2>
+        <div class="fgrid">
+          <label>Save to</label>
+          <div class="frow">
+            <input id="save-dir" type="text" placeholder="save folder" autocomplete="off" spellcheck="false" />
+            <button class="btn" id="save-dir-btn">Save</button>
+          </div>
+        </div>
+        <div class="note" id="settings-note"></div>
+      </div>
+    </section>
+
+    <!-- HISTORY -->
+    <section id="tab-history" style="display:none;">
+      <div class="card">
+        <div class="section-head">
+          <h2 class="sect" style="margin:0">Recent downloads</h2>
+          <button class="btn" id="clear-hist">Clear</button>
+        </div>
+        <div id="hist-list" style="margin-top:12px"><div class="empty">Loading…</div></div>
+      </div>
+    </section>
+  </div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+async function api(path, opts) { const r = await fetch(path, opts); return r.json(); }
+function post(path, body) {
+  return api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+}
+function showNote(el, kind, html) { el.className = "note show " + kind; el.innerHTML = html; }
+function hideNote(el) { el.className = "note"; }
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+document.querySelectorAll("nav button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    const tab = b.dataset.tab;
+    ["download", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
+    if (tab === "settings") loadSettings();
+    if (tab === "history") loadHistory();
+  };
+});
+
+// ---- Download ----
+let current = null;
+async function doFetch() {
+  const raw = $("#asset-input").value.trim();
+  if (!raw) return;
+  const btn = $("#fetch-btn"); btn.disabled = true; btn.textContent = "…";
+  hideNote($("#dl-note")); $("#result").style.display = "none";
+  const res = await api("/api/lookup?id=" + encodeURIComponent(raw));
+  btn.disabled = false; btn.textContent = "Fetch";
+  if (!res.ok) { showNote($("#dl-note"), "err", esc(res.error)); return; }
+  current = res.data;
+  $("#r-name").textContent = res.data.name;
+  $("#r-meta").innerHTML = res.data.creator_name ? "by " + esc(res.data.creator_name) + " · #" + res.data.id : "#" + res.data.id;
+  $("#r-type").textContent = res.data.type_label;
+  const thumb = $("#r-thumb");
+  if (res.data.thumbnail) { thumb.src = res.data.thumbnail; thumb.style.display = ""; } else { thumb.style.display = "none"; }
+  $("#result").style.display = "block";
+  if (res.data.note) showNote($("#dl-note"), "info", esc(res.data.note));
+}
+async function doDownload() {
+  if (!current) return;
+  const btn = $("#download-btn"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Resolving…';
+  showNote($("#dl-note"), "info", "Walking the authorization ladder…");
+  const res = await post("/api/download", { id: String(current.id) });
+  btn.disabled = false;
+  btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download';
+  if (!res.ok) { showNote($("#dl-note"), "err", esc(res.error)); return; }
+  const d = res.data;
+  showNote($("#dl-note"), "ok",
+    "Saved <b>" + esc(d.name) + "</b> via <b>" + esc(d.method) + "</b><br><code>" + esc(d.path) + "</code>" +
+    '<div class="acts"><button class="btn" id="reveal-btn">Show in folder</button></div>');
+  const rb = $("#reveal-btn"); if (rb) rb.onclick = () => post("/api/reveal", { path: d.path });
+}
+$("#fetch-btn").onclick = doFetch;
+$("#asset-input").addEventListener("keydown", (e) => { if (e.key === "Enter") doFetch(); });
+$("#download-btn").onclick = doDownload;
+
+// ---- Settings ----
+async function loadSettings() {
+  const res = await api("/api/settings"); if (!res.ok) return;
+  $("#save-dir").value = res.data.save_dir;
+  $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
+  $("#cookie").placeholder = res.data.has_cookie ? "saved, blank keeps it" : ".ROBLOSECURITY";
+}
+$("#save-creds").onclick = async () => {
+  const body = {}; const k = $("#api-key").value, c = $("#cookie").value;
+  if (k !== "") body.api_key = k; if (c !== "") body.cookie = c;
+  const res = await post("/api/credentials", body);
+  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
+  $("#api-key").value = ""; $("#cookie").value = "";
+  showNote($("#cookie-note"), "ok", "Credentials saved."); loadSettings();
+};
+$("#check-cookie").onclick = async () => {
+  showNote($("#cookie-note"), "info", "Checking…");
+  const res = await api("/api/cookie-info");
+  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
+  const d = res.data;
+  if (!d.alive) showNote($("#cookie-note"), "err", '<span class="dot off"></span>' + esc(d.reason || "cookie is not valid"));
+  else showNote($("#cookie-note"), "ok", '<span class="dot on"></span>Alive as <b>' + esc(d.display_name || d.username) + "</b> (@" + esc(d.username) + ")" + (d.robux != null ? ", " + d.robux + " Robux" : ""));
+};
+$("#save-dir-btn").onclick = async () => {
+  const res = await post("/api/settings", { save_dir: $("#save-dir").value });
+  if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
+  showNote($("#settings-note"), "ok", "Download folder saved.");
+};
+
+// ---- History ----
+function fmtWhen(ms) { const n = Number(ms); if (!n) return ""; return new Date(n).toLocaleString(); }
+async function loadHistory() {
+  const res = await api("/api/history"); const list = $("#hist-list");
+  if (!res.ok || !res.data.length) { list.innerHTML = '<div class="empty">No downloads yet.</div>'; return; }
+  list.innerHTML = res.data.map((h) =>
+    '<div class="hist-item"><div class="hist-main">' +
+    '<div class="hist-name">' + esc(h.name) + ' <span>#' + h.id + '</span></div>' +
+    '<div class="hist-sub">' + esc(h.type_label) + " · " + esc(h.method) + " · " + esc(fmtWhen(h.when)) + '</div>' +
+    '</div><button class="btn" data-path="' + esc(h.path) + '">Show</button></div>'
+  ).join("");
+  list.querySelectorAll("button[data-path]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: b.dataset.path }); });
+}
+$("#clear-hist").onclick = async () => { await post("/api/history/clear", {}); loadHistory(); };
+
+$("#asset-input").focus();
+</script>
+</body>
+</html>
