@@ -37,11 +37,34 @@ window, to close it use **Quit** at the bottom of the page.
   `.rbxmx` file on it to pull every asset id out of a place or model. Filter by type
   and by public / private before you start. Afterwards you can retry the failed ones,
   copy their ids or zip everything.
+- **Migrate** - move a place's assets to your account or a group, from Studio. See below.
 - **Accounts** - every cookie you added, with its avatar, whether it still works and
   how many requests it has done.
 - **Settings** - API key, cookies, download folder, sorting into folders per type, and
   saving meshes as `.obj` too.
 - **History** - past downloads, searchable, with a button to open the file in Explorer.
+
+## Migrate
+
+Moves every asset a place uses over to your account or a group you can manage, and
+swaps the new ids into the place for you. Handy when a game moves to a new group and
+half its sounds and images stop loading.
+
+1. In the Migrate tab, click **Install plugin**, then restart Studio. If it can't find
+   your Plugins folder it asks for it (Studio: Plugins tab, Plugins Folder).
+2. Open your place and click **Migrate** in the Plugins tab.
+3. Click **Get a code** in the app and type it into the plugin. You only do this once,
+   the plugin stays connected after Studio restarts.
+4. Click **Scan place** in the plugin. Every asset id in the place (properties and
+   `rbxassetid://` in scripts) shows up in the app.
+5. Pick where they go, choose **Swap IDs in the place** or **Only give me a mapping**,
+   and hit Move. The plugin swaps the ids in when it's done, Ctrl+Z undoes it.
+
+Sounds, images, meshes and animations get moved. It works with any asset rbxyoinker
+can download, not only your own. Everything downloads first (spread across your
+accounts like Bulk), then gets reuploaded one by one with the account that manages the
+target. Audio uploads count toward Roblox's monthly limit (100 a month with ID
+verification, 10 without).
 
 ## Credentials
 
@@ -61,6 +84,7 @@ Don't share your cookie with anyone, it's a full login to your account.
 
 If a direct download is refused, it asks Roblox for the asset "from inside" games that
 could be using it: first the creator's own games, then games of groups the creator is in.
+In Migrate it tries the place you're scanning before any of those.
 Whatever works gets remembered, so the next asset from the same creator is quick.
 
 ## When a download fails
