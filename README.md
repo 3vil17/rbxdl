@@ -9,7 +9,7 @@ paste an asset id or link, and it saves the file. Everything goes straight from 
 machine to Roblox, there's no server in between.
 
 Works with audio, images, decals, meshes, models, animations and pretty much anything
-else that has an asset id. Decals get followed to the actual image.
+else that has an asset id.
 
 ## Installation
 
@@ -27,18 +27,20 @@ The exe ends up in `target/release/rbxyoinker.exe`.
 ## Usage
 
 When you run it, a browser tab opens. If it doesn't, the console window prints the
-address to open.
+address to open. Running the exe again while it's already open just brings the tab back.
 
-- **Download** - paste an id or any roblox.com / create.roblox.com link, hit Fetch to
-  preview it, then Download.
-- **Bulk** - paste up to 500 ids or links (spaces, commas or new lines all work).
-  Shows progress per asset and you can cancel halfway.
+- **Download** - paste an id or any roblox.com / create.roblox.com link and hit Fetch.
+  You get a preview with the type, whether it's public or private, and a Play button
+  for audio. Put a number in Version to grab an older version of the asset.
+- **Bulk** - paste up to 500 ids or links, or drop a `.rbxl` / `.rbxm` / `.rbxlx` /
+  `.rbxmx` file on it to pull every asset id out of a place or model. Filter by type
+  and by public / private before you start. Afterwards you can retry the failed ones,
+  copy their ids or zip everything.
 - **Accounts** - every cookie you added, with its avatar, whether it still works and
   how many requests it has done.
-- **Settings** - API key, cookies and the download folder.
-- **History** - past downloads with a button to open the file in Explorer.
-
-Files go to `Downloads/rbxyoinker` by default, you can pick another folder in Settings.
+- **Settings** - API key, cookies, download folder, sorting into folders per type, and
+  saving meshes as `.obj` too.
+- **History** - past downloads, searchable, with a button to open the file in Explorer.
 
 ## Credentials
 
@@ -54,15 +56,23 @@ They're stored in Windows Credential Manager, not in a file.
 
 Don't share your cookie with anyone, it's a full login to your account.
 
+## How it gets private assets
+
+If a direct download is refused, it asks Roblox for the asset "from inside" games that
+could be using it: first the creator's own games, then games of groups the creator is in.
+Whatever works gets remembered, so the next asset from the same creator is quick.
+
 ## When a download fails
 
 It tells you what Roblox said for each thing it tried, for example `403 User is not
 authorized to access Asset`. Usually it means the asset is private and none of your
-accounts have access, or the asset got moderated or deleted.
+accounts have access. Packages, moderated assets and deleted assets can't be downloaded.
 
-## Notes
+## Disclaimer
 
-Personal project, still early. Issues and PRs welcome.
+rbxyoinker is a fan-made tool and isn't affiliated with or endorsed by Roblox. Only
+download or reuse assets you made or have permission to use. Using your accounts with
+third party tools is at your own risk.
 
 ## License
 

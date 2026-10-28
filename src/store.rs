@@ -77,6 +77,8 @@ pub struct Settings {
     pub sort_by_type: bool,
     #[serde(default = "yes")]
     pub mesh_obj: bool,
+    #[serde(default)]
+    pub accepted_terms: bool,
 }
 
 fn yes() -> bool {
@@ -89,6 +91,7 @@ impl Default for Settings {
             save_dir: default_save_dir().to_string_lossy().to_string(),
             sort_by_type: false,
             mesh_obj: true,
+            accepted_terms: false,
         }
     }
 }

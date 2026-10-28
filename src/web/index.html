@@ -102,6 +102,11 @@
   textarea:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
   textarea::placeholder { color: rgb(85, 85, 85); }
   .note .line { display: block; }
+  .nerd { margin-top: 6px; }
+  .nerd summary { cursor: pointer; font-size: 0.7rem; color: rgb(136,136,136); user-select: none; }
+  .nerd summary:hover { color: rgb(212,212,212); }
+  .nerd .raw { margin-top: 6px; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.25);
+    font-family: monospace; font-size: 0.7rem; line-height: 1.6; color: rgb(170,170,170); word-break: break-word; }
   .check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.75rem; color: rgb(144,144,144); cursor: pointer; user-select: none; }
   .check input { accent-color: var(--green); margin: 0; }
   .st.have { background: rgba(255,255,255,0.05); color: rgb(59,186,87); }
@@ -126,6 +131,14 @@
     border: 1px solid rgba(255,255,255,0.08); }
   #health-line { color: rgb(208, 96, 112); }
   .drop { outline: 1px dashed rgba(59,234,87,0.6); outline-offset: -1px; }
+  .modal-bg { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,0.6); display: flex; align-items: center;
+    justify-content: center; padding: 16px; }
+  .modal { max-width: 520px; width: 100%; background: linear-gradient(rgb(28,30,32), rgb(28,30,32)) padding-box,
+    linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 100%) border-box; }
+  .modal ul { margin: 14px 0 0; padding-left: 18px; font-size: 0.82rem; line-height: 1.65; color: rgb(170,170,170); }
+  .modal li { margin-bottom: 6px; }
+  .modal li::marker { color: rgb(102,102,102); }
+  .modal code { background: rgba(255,255,255,0.07); border-radius: 4px; padding: 1px 5px; font-size: 0.78rem; color: rgb(212,212,212); }
   .foot { text-align: center; font-size: 0.72rem; color: rgb(102, 102, 102); margin: 6px 0 0; }
   .foot b { color: var(--green); font-weight: 500; }
   textarea.lines {
@@ -408,6 +421,22 @@
     <p class="foot">rbx<b>yoinker</b> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT</p>
   </div>
 
+<div class="modal-bg" id="terms" style="display:none">
+  <div class="card modal">
+    <div class="titlebar">
+      <img class="logo" src="/logo.png" alt="" />
+      <p class="title" style="margin:0; font-size:0.95rem; font-weight:600; color:#fff">Before you start</p>
+    </div>
+    <ul>
+      <li>rbxyoinker is a fan-made tool. It isn't made by, affiliated with or endorsed by Roblox.</li>
+      <li>Only download or reuse assets you made or have permission to use. Respect other creators and the Roblox Terms of Use.</li>
+      <li>A <code>.ROBLOSECURITY</code> cookie is a full login to that account. It stays on this PC in Windows Credential Manager. Never share it or paste it anywhere you don't trust.</li>
+      <li>Using your accounts with third party tools is at your own risk. The software comes as is, with no warranty (MIT license).</li>
+    </ul>
+    <div class="fbtns"><button class="btn" id="terms-ok">I understand</button></div>
+  </div>
+</div>
+
 <script>
 const $ = (s) => document.querySelector(s);
 async function api(path, opts) { const r = await fetch(path, opts); return r.json(); }
@@ -446,7 +475,24 @@ document.querySelectorAll("[data-i]").forEach((el) => {
   else el.insertAdjacentHTML("afterbegin", svg(el.dataset.i));
 });
 // Roblox failure details come back joined by " | ", one line per step
-function errHtml(msg) { return String(msg || "").split(" | ").map((l) => '<span class="line">' + esc(l) + "</span>").join(""); }
+function friendly(msg) {
+  const m = String(msg || "").toLowerCase();
+  if (m.includes("moderated")) return "Roblox removed this asset for breaking its rules, so it can't be downloaded.";
+  if (m.includes("every saved cookie is expired")) return "Your cookies stopped working. Add fresh ones in Settings.";
+  if (m.includes("no credentials saved")) return "Add a cookie or an API key in Settings first.";
+  if (m.includes("this is a model")) return "This is a package or a private model. Only accounts that have access to it can download it.";
+  if (m.includes("rate limited")) return "Roblox is limiting how fast your accounts can download. Wait a minute, or add more cookies.";
+  if (m.includes("404")) return "This asset doesn't exist or was deleted.";
+  if (m.includes("401")) return "One of your cookies expired. Replace it in Settings.";
+  if (m.includes("not authorized") || m.includes("403") || m.includes("409"))
+    return "This asset is private and none of your accounts can get it. It isn't used in any public game we could find from its creator or their groups.";
+  if (m.includes("network error")) return "Couldn't reach Roblox. Check your internet connection.";
+  return "Couldn't download this asset.";
+}
+function errHtml(msg) {
+  const lines = String(msg || "").split(" | ").map((l) => '<span class="line">' + esc(l) + "</span>").join("");
+  return esc(friendly(msg)) + '<details class="nerd"><summary>Details</summary><div class="raw">' + lines + "</div></details>";
+}
 
 function store(k, v) { try { if (v === undefined) return localStorage.getItem("ryk_" + k); localStorage.setItem("ryk_" + k, v); } catch (e) { return null; } }
 let accTimer = null;
@@ -790,6 +836,8 @@ $("#clear-hist").onclick = async () => { await post("/api/history/clear", {}); l
 $("#asset-input").focus();
 checkHealth();
 loadRecent();
+api("/api/settings").then((res) => { if (res.ok && !res.data.accepted_terms) $("#terms").style.display = "flex"; });
+$("#terms-ok").onclick = async () => { await post("/api/accept", {}); $("#terms").style.display = "none"; };
 const lastTab = store("tab");
 if (lastTab && lastTab !== "download") { const b = document.querySelector('nav button[data-tab="' + lastTab + '"]'); if (b) b.click(); }
 </script>

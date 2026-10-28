@@ -17,6 +17,26 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const BULK_MAX: usize = 500;
+const PORT: u16 = 48620;
+
+// Browsers tag every request with where it came from. Anything a different
+// site sends to this local server gets refused.
+async fn same_site_only(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let site = req.headers().get("sec-fetch-site").and_then(|v| v.to_str().ok()).unwrap_or("none");
+    if site == "cross-site" || site == "same-site" {
+        return (axum::http::StatusCode::FORBIDDEN, "blocked").into_response();
+    }
+    next.run(req).await
+}
+
+async fn accept_terms() -> Json<Value> {
+    let mut s = store::load_settings();
+    s.accepted_terms = true;
+    match store::save_settings(&s) {
+        Ok(_) => ok(Value::Null),
+        Err(e) => fail(e.to_string()),
+    }
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -81,13 +101,18 @@ pub async fn run() -> std::io::Result<()> {
         .route("/api/bulk/zip", post(bulk_zip))
         .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/api/update", get(update_check))
+        .route("/api/accept", post(accept_terms))
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
         .route("/api/reveal", post(reveal))
         .route("/api/pick-folder", post(pick_folder))
+        .layer(axum::middleware::from_fn(same_site_only))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let listener = match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
+        Ok(l) => l,
+        Err(_) => tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+    };
     let addr = listener.local_addr()?;
     let url = format!("http://{addr}");
     println!("rbxyoinker running at {url}");
@@ -236,6 +261,7 @@ async fn get_settings() -> Json<Value> {
         "save_dir": s.save_dir,
         "sort_by_type": s.sort_by_type,
         "mesh_obj": s.mesh_obj,
+        "accepted_terms": s.accepted_terms,
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
     }))
