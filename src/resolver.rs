@@ -112,11 +112,16 @@ pub async fn resolve(
         return Err(finish(notes, limited));
     };
     let mut tried_places: Vec<i64> = Vec::new();
+    let owner = (ctype.as_str(), cid);
+    let known = rb.known_places(&ctype, cid);
+    if let Places::Hit(a) = try_places(rb, pool, id, version, &known, None, owner, &mut tried_places).await {
+        return Ok(a);
+    }
     let places = rb.list_creator_places(&ctype, cid, 60).await;
     if places.is_empty() {
         notes.push(format!("Place-Id fallback: the creator ({ctype} {cid}) has no public places"));
     } else {
-        match try_places(rb, pool, id, version, &places, None, &mut tried_places).await {
+        match try_places(rb, pool, id, version, &places, None, owner, &mut tried_places).await {
             Places::Hit(a) => return Ok(a),
             Places::Limited(n) => {
                 notes.push(format!("Place-Id fallback: rate limited after {n} places"));
@@ -141,7 +146,7 @@ pub async fn resolve(
             break;
         }
         let places = rb.list_creator_places("Group", g.id, 10).await;
-        match try_places(rb, pool, id, version, &places, Some(&g.name), &mut tried_places).await {
+        match try_places(rb, pool, id, version, &places, Some(&g.name), owner, &mut tried_places).await {
             Places::Hit(a) => return Ok(a),
             Places::Limited(n) => {
                 notes.push(format!("Group games: rate limited after {} places", count + n));
@@ -183,6 +188,7 @@ async fn try_places(
     version: Option<u32>,
     places: &[crate::roblox::PlaceRef],
     group: Option<&str>,
+    owner: (&str, i64),
     tried: &mut Vec<i64>,
 ) -> Places {
     let mut count = 0;
@@ -194,6 +200,7 @@ async fn try_places(
         tried.push(p.place_id);
         match via_cookie(rb, pool, id, Some(p.place_id), version, &[]).await {
             Ok((bytes, label)) => {
+                rb.remember_place(owner.0, owner.1, p);
                 let via = match group {
                     Some(g) => format!(" via group {g}"),
                     None => String::new(),

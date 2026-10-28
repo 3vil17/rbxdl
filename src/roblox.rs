@@ -1,12 +1,28 @@
 use crate::error::{Error, Result};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const UA: &str = "Roblox/WinInet";
+const CACHE_TTL: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
 pub struct Roblox {
     http: reqwest::Client,
+    cache: Arc<Mutex<Cache>>,
+}
+
+#[derive(Default)]
+struct Cache {
+    places: HashMap<(String, i64, usize), (Instant, Vec<PlaceRef>)>,
+    groups: HashMap<i64, (Instant, Vec<GroupRef>)>,
+    winners: HashMap<(String, i64), Vec<PlaceRef>>,
+}
+
+fn fresh<T: Clone>(entry: Option<&(Instant, T)>) -> Option<T> {
+    entry.filter(|(t, _)| t.elapsed() < CACHE_TTL).map(|(_, v)| v.clone())
 }
 
 #[derive(Serialize, Clone)]
@@ -29,6 +45,7 @@ pub struct CookieInfo {
     pub robux: Option<i64>,
 }
 
+#[derive(Clone)]
 pub struct GroupRef {
     pub id: i64,
     pub name: String,
@@ -48,7 +65,44 @@ impl Roblox {
             .gzip(true)
             .build()
             .expect("http client");
-        Self { http }
+        Self { http, cache: Arc::default() }
+    }
+
+    fn cache(&self) -> std::sync::MutexGuard<'_, Cache> {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub async fn user_groups(&self, user_id: i64) -> Vec<GroupRef> {
+        if let Some(v) = fresh(self.cache().groups.get(&user_id)) {
+            return v;
+        }
+        let v = self.fetch_user_groups(user_id).await;
+        self.cache().groups.insert(user_id, (Instant::now(), v.clone()));
+        v
+    }
+
+    pub async fn list_creator_places(&self, creator_type: &str, creator_id: i64, max: usize) -> Vec<PlaceRef> {
+        let key = (creator_type.to_ascii_lowercase(), creator_id, max);
+        if let Some(v) = fresh(self.cache().places.get(&key)) {
+            return v;
+        }
+        let v = self.fetch_creator_places(creator_type, creator_id, max).await;
+        self.cache().places.insert(key, (Instant::now(), v.clone()));
+        v
+    }
+
+    pub fn known_places(&self, creator_type: &str, creator_id: i64) -> Vec<PlaceRef> {
+        let key = (creator_type.to_ascii_lowercase(), creator_id);
+        self.cache().winners.get(&key).cloned().unwrap_or_default()
+    }
+
+    pub fn remember_place(&self, creator_type: &str, creator_id: i64, place: &PlaceRef) {
+        let key = (creator_type.to_ascii_lowercase(), creator_id);
+        let mut c = self.cache();
+        let list = c.winners.entry(key).or_default();
+        list.retain(|p| p.place_id != place.place_id);
+        list.insert(0, place.clone());
+        list.truncate(5);
     }
 
     pub async fn asset_details(&self, id: i64) -> Result<AssetDetails> {
@@ -148,7 +202,7 @@ impl Roblox {
         }
     }
 
-    pub async fn user_groups(&self, user_id: i64) -> Vec<GroupRef> {
+    async fn fetch_user_groups(&self, user_id: i64) -> Vec<GroupRef> {
         let url = format!("https://groups.roblox.com/v2/users/{user_id}/groups/roles");
         let Ok(resp) = self.http.get(&url).send().await else { return Vec::new() };
         let Ok(v) = resp.json::<Value>().await else { return Vec::new() };
@@ -166,7 +220,7 @@ impl Roblox {
             .collect()
     }
 
-    pub async fn list_creator_places(&self, creator_type: &str, creator_id: i64, max: usize) -> Vec<PlaceRef> {
+    async fn fetch_creator_places(&self, creator_type: &str, creator_id: i64, max: usize) -> Vec<PlaceRef> {
         let page = if max <= 10 { 10 } else { 50 };
         let base = if creator_type.eq_ignore_ascii_case("Group") {
             format!("https://games.roblox.com/v2/groups/{creator_id}/games")
