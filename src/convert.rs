@@ -76,3 +76,14 @@ pub fn type_label(asset_type_id: i64) -> &'static str {
         _ => "Asset",
     }
 }
+
+pub fn mime_for(bytes: &[u8]) -> &'static str {
+    match extension_for(bytes, 0) {
+        "ogg" => "audio/ogg",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        _ => "application/octet-stream",
+    }
+}

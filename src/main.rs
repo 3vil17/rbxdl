@@ -1,6 +1,7 @@
 mod convert;
 mod download;
 mod error;
+mod mesh;
 mod pool;
 mod resolver;
 mod roblox;

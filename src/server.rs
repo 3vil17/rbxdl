@@ -30,6 +30,7 @@ struct Bulk {
     running: bool,
     cancel: bool,
     skip_existing: bool,
+    prefetched: usize,
     items: Vec<BulkItem>,
 }
 
@@ -66,6 +67,7 @@ pub async fn run() -> std::io::Result<()> {
         .route("/logo.png", get(logo))
         .route("/api/lookup", get(lookup))
         .route("/api/download", post(download_asset))
+        .route("/api/raw", get(raw_asset))
         .route("/api/settings", get(get_settings).post(set_settings))
         .route("/api/credentials", post(set_credentials))
         .route("/api/accounts", get(accounts))
@@ -149,8 +151,16 @@ async fn lookup(State(st): State<AppState>, Query(q): Query<LookupQ>) -> Json<Va
     };
     match st.rb.asset_details(id).await {
         Ok(d) => {
-            let thumb = st.rb.thumbnail_url(id).await;
+            let (thumb, state) = st.rb.thumbnail(id).await;
+            let moderation = if d.name == "[ Content Deleted ]" || state.as_deref() == Some("Blocked") {
+                Some("Moderated")
+            } else if matches!(state.as_deref(), Some("InReview") | Some("Pending")) {
+                Some("In review")
+            } else {
+                None
+            };
             ok(json!({
+                "moderation": moderation,
                 "id": d.id,
                 "name": d.name,
                 "description": d.description,
@@ -200,11 +210,28 @@ async fn download_asset(State(st): State<AppState>, Json(body): Json<DownloadBod
     }
 }
 
+#[derive(Deserialize)]
+struct RawQ {
+    id: String,
+}
+
+async fn raw_asset(State(st): State<AppState>, Query(q): Query<RawQ>) -> axum::response::Response {
+    let Some(id) = parse_asset_id(&q.id) else {
+        return (axum::http::StatusCode::BAD_REQUEST, "bad id").into_response();
+    };
+    let api_key = store::get_secret("api_key");
+    match download::resolve_bytes(&st.rb, api_key.as_deref(), &st.pool, id).await {
+        Ok(bytes) => ([(header::CONTENT_TYPE, crate::convert::mime_for(&bytes))], bytes).into_response(),
+        Err(e) => (axum::http::StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    }
+}
+
 async fn get_settings() -> Json<Value> {
     let s = store::load_settings();
     ok(json!({
         "save_dir": s.save_dir,
         "sort_by_type": s.sort_by_type,
+        "mesh_obj": s.mesh_obj,
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
     }))
@@ -214,6 +241,7 @@ async fn get_settings() -> Json<Value> {
 struct SettingsBody {
     save_dir: Option<String>,
     sort_by_type: Option<bool>,
+    mesh_obj: Option<bool>,
 }
 
 async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
@@ -228,8 +256,11 @@ async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
     if let Some(sort) = body.sort_by_type {
         s.sort_by_type = sort;
     }
+    if let Some(obj) = body.mesh_obj {
+        s.mesh_obj = obj;
+    }
     match store::save_settings(&s) {
-        Ok(_) => ok(json!({ "save_dir": s.save_dir, "sort_by_type": s.sort_by_type })),
+        Ok(_) => ok(json!({ "save_dir": s.save_dir, "sort_by_type": s.sort_by_type, "mesh_obj": s.mesh_obj })),
         Err(e) => fail(e.to_string()),
     }
 }
@@ -330,6 +361,7 @@ async fn bulk_start(State(st): State<AppState>, Json(body): Json<BulkBody>) -> J
             running: true,
             cancel: false,
             skip_existing: body.skip_existing,
+            prefetched: 0,
             items: ids.iter().map(|&id| BulkItem { id, state: "queued", ..Default::default() }).collect(),
         };
     }
@@ -378,7 +410,14 @@ fn bulk_set(st: &AppState, i: usize, f: impl FnOnce(&mut BulkItem)) -> bool {
 async fn run_bulk(st: AppState, todo: Vec<usize>, workers: usize) {
     let todo = Arc::new(todo);
     let next = Arc::new(AtomicUsize::new(0));
-    let skip_existing = st.bulk.lock().unwrap_or_else(|e| e.into_inner()).skip_existing;
+    let (skip_existing, ids): (bool, Vec<i64>) = {
+        let b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+        (b.skip_existing, todo.iter().map(|&i| b.items[i].id).collect())
+    };
+    if let Some(lease) = st.pool.acquire(&[]).await {
+        let n = st.rb.prefetch_details(&lease.cookie, &ids).await;
+        st.bulk.lock().unwrap_or_else(|e| e.into_inner()).prefetched += n;
+    }
     let mut handles = Vec::new();
     for _ in 0..workers {
         let (st, todo, next) = (st.clone(), todo.clone(), next.clone());
@@ -440,7 +479,7 @@ async fn run_bulk(st: AppState, todo: Vec<usize>, workers: usize) {
 
 async fn bulk_status(State(st): State<AppState>) -> Json<Value> {
     let b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
-    ok(json!({ "running": b.running, "items": b.items }))
+    ok(json!({ "running": b.running, "prefetched": b.prefetched, "items": b.items }))
 }
 
 async fn bulk_cancel(State(st): State<AppState>) -> Json<Value> {

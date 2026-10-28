@@ -75,6 +75,12 @@ pub struct Settings {
     pub save_dir: String,
     #[serde(default)]
     pub sort_by_type: bool,
+    #[serde(default = "yes")]
+    pub mesh_obj: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -82,6 +88,7 @@ impl Default for Settings {
         Settings {
             save_dir: default_save_dir().to_string_lossy().to_string(),
             sort_by_type: false,
+            mesh_obj: true,
         }
     }
 }

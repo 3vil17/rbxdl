@@ -1,5 +1,5 @@
 use crate::convert;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::resolver;
 use crate::pool::Pool;
 use crate::roblox::Roblox;
@@ -46,10 +46,22 @@ pub async fn fetch_and_save(
         None => (format!("asset_{id}"), 0, None),
     };
 
-    let mut attempt = resolver::resolve(rb, api_key, pool, id, version, creator).await?;
+    if name == "[ Content Deleted ]" {
+        return Err(Error::Denied("this asset was moderated by Roblox (content deleted)".into()));
+    }
+    let mut attempt = match resolver::resolve(rb, api_key, pool, id, version, creator).await {
+        Ok(a) => a,
+        Err(Error::Denied(msg)) if atype0 == 10 => {
+            return Err(Error::Denied(format!(
+                "{msg} | Note: this is a model. Packages and private models only download for accounts that have access to them"
+            )))
+        }
+        Err(e) => return Err(e),
+    };
 
     let mut atype = atype0;
-    if let Some(inner) = convert::inner_asset_id(&attempt.bytes) {
+    let follow = matches!(atype0, 0 | 1 | 13);
+    if let Some(inner) = convert::inner_asset_id(&attempt.bytes).filter(|_| follow) {
         if inner != id {
             if let Ok(a2) = resolver::resolve(rb, api_key, pool, inner, None, None).await {
                 attempt.bytes = a2.bytes;
@@ -73,6 +85,11 @@ pub async fn fetch_and_save(
     std::fs::create_dir_all(&dir)?;
     let full = dir.join(&filename);
     std::fs::write(&full, &attempt.bytes)?;
+    if ext == "mesh" && settings.mesh_obj {
+        if let Some(obj) = crate::mesh::to_obj(&attempt.bytes) {
+            let _ = std::fs::write(full.with_extension("obj"), obj);
+        }
+    }
     let path = full.to_string_lossy().to_string();
 
     let _ = store::push_history(store::HistoryEntry {
@@ -93,4 +110,14 @@ pub async fn fetch_and_save(
         account: attempt.account,
         path,
     })
+}
+
+pub async fn resolve_bytes(
+    rb: &Roblox,
+    api_key: Option<&str>,
+    pool: &Pool,
+    id: i64,
+) -> Result<Vec<u8>> {
+    let creator = rb.asset_details(id).await.ok().map(|d| (d.creator_type, d.creator_id));
+    Ok(resolver::resolve(rb, api_key, pool, id, None, creator).await?.bytes)
 }

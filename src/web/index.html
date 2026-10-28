@@ -105,6 +105,8 @@
   .check input { accent-color: var(--green); margin: 0; }
   .st.have { background: rgba(255,255,255,0.05); color: rgb(59,186,87); }
   #update-line { margin-top: 2px; }
+  .badge.mod { background: rgba(236,59,71,0.12); color: rgb(208,96,112); margin-left: 4px; }
+  .drop { outline: 1px dashed rgba(59,234,87,0.6); outline-offset: -1px; }
   .foot { text-align: center; font-size: 0.72rem; color: rgb(102, 102, 102); margin: 6px 0 0; }
   .foot b { color: var(--green); font-weight: 500; }
   textarea.lines {
@@ -256,12 +258,15 @@
               <div class="asset-name" id="r-name"></div>
               <div class="asset-meta" id="r-meta"></div>
               <span class="badge" id="r-type"></span>
+              <span class="badge mod" id="r-mod" style="display:none"></span>
             </div>
           </div>
           <div class="fbtns">
             <input id="version-input" type="text" inputmode="numeric" placeholder="Version (optional, latest if empty)" autocomplete="off" style="flex:1 1 0" />
+            <button class="btn" id="play-btn" data-i="play" style="display:none">Play</button>
             <button class="btn" id="download-btn" data-i="download">Download</button>
           </div>
+          <audio id="player" controls style="display:none; width:100%; margin-top:12px; height:34px"></audio>
         </div>
 
         <div class="note" id="dl-note"></div>
@@ -298,6 +303,7 @@
         <div class="fbtns" id="bulk-after" style="display:none">
           <button class="btn" id="bulk-retry" data-i="refresh">Retry failed</button>
           <button class="btn" id="bulk-zip" data-i="archive">Zip everything</button>
+          <button class="btn" id="bulk-copy" data-i="copy">Copy failed ids</button>
         </div>
         <div class="bar"><div id="bulk-bar"></div></div>
         <div class="counts" id="bulk-counts"></div>
@@ -347,7 +353,8 @@
             <button class="btn" id="save-dir-btn" data-i="save">Save</button>
           </div>
         </div>
-        <label class="check" style="margin-top:12px"><input type="checkbox" id="sort-type" /> Sort into folders by type (Audio, Image, Mesh...)</label>
+        <label class="check" style="margin-top:12px"><input type="checkbox" id="sort-type" /> Sort into folders by type (Audio, Image, Mesh...)</label><br>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="mesh-obj" /> Also save meshes as .obj (opens in Blender)</label>
         <div class="note" id="settings-note"></div>
       </div>
     </section>
@@ -359,7 +366,8 @@
           <h2 class="sect" style="margin:0"><i data-i="history"></i>Recent downloads</h2>
           <button class="btn" id="clear-hist" data-i="trash">Clear</button>
         </div>
-        <div id="hist-list" style="margin-top:12px"><div class="empty">Loading…</div></div>
+        <input id="hist-search" type="text" placeholder="Search by name, type or id" autocomplete="off" spellcheck="false" style="margin-top:12px" />
+        <div id="hist-list" style="margin-top:8px"><div class="empty">Loading…</div></div>
       </div>
     </section>
 
@@ -391,6 +399,8 @@ const ICONS = {
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
   archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
   folder: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
@@ -432,6 +442,10 @@ async function doFetch() {
   $("#r-name").textContent = res.data.name;
   $("#r-meta").innerHTML = res.data.creator_name ? "by " + esc(res.data.creator_name) + " · #" + res.data.id : "#" + res.data.id;
   $("#r-type").textContent = res.data.type_label;
+  $("#r-mod").style.display = res.data.moderation ? "" : "none";
+  $("#r-mod").textContent = res.data.moderation || "";
+  $("#play-btn").style.display = res.data.type_label === "Audio" ? "" : "none";
+  const pl = $("#player"); pl.pause(); pl.removeAttribute("src"); pl.style.display = "none";
   const thumb = $("#r-thumb");
   if (res.data.thumbnail) { thumb.src = res.data.thumbnail; thumb.style.display = ""; } else { thumb.style.display = "none"; }
   $("#result").style.display = "block";
@@ -452,6 +466,13 @@ async function doDownload() {
     '<div class="acts"><button class="btn" id="reveal-btn">' + svg("folder") + ' Show in folder</button></div>');
   const rb = $("#reveal-btn"); if (rb) rb.onclick = () => post("/api/reveal", { path: d.path });
 }
+$("#play-btn").onclick = () => {
+  if (!current) return;
+  const pl = $("#player");
+  pl.src = "/api/raw?id=" + current.id; pl.style.display = "block";
+  pl.play().catch(() => showNote($("#dl-note"), "err", "Couldn't load this audio with your current credentials."));
+  pl.onerror = () => showNote($("#dl-note"), "err", "Couldn't load this audio with your current credentials.");
+};
 $("#fetch-btn").onclick = doFetch;
 $("#asset-input").addEventListener("keydown", (e) => { if (e.key === "Enter") doFetch(); });
 $("#download-btn").onclick = doDownload;
@@ -461,6 +482,7 @@ async function loadSettings() {
   const res = await api("/api/settings"); if (!res.ok) return;
   $("#save-dir").value = res.data.save_dir;
   $("#sort-type").checked = !!res.data.sort_by_type;
+  $("#mesh-obj").checked = !!res.data.mesh_obj;
   $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
   $("#cookie-count").textContent = res.data.cookie_count ? "(" + res.data.cookie_count + " saved)" : "";
   $("#cookies").placeholder = res.data.cookie_count ? "saved, blank keeps them. Paste a new list to replace" : ".ROBLOSECURITY values, one per line";
@@ -539,7 +561,19 @@ function renderBulk(d) {
   $("#bulk-after").style.display = !d.running && it.length ? "flex" : "none";
   $("#bulk-retry").disabled = !(c.error + c.skipped);
   $("#bulk-zip").disabled = !(c.ok + c.have);
+  $("#bulk-copy").disabled = !c.error;
+  lastBulk = it;
 }
+let lastBulk = [];
+$("#bulk-copy").onclick = async () => {
+  const ids = lastBulk.filter((x) => x.state === "error").map((x) => x.id);
+  try { await navigator.clipboard.writeText(ids.join(String.fromCharCode(10))); showNote($("#bulk-note"), "ok", "Copied " + ids.length + " failed ids."); }
+  catch (e) { showNote($("#bulk-note"), "err", "Couldn't copy: " + esc(e.message)); }
+};
+const bulkCard = $("#bulk-input").closest(".card");
+["dragenter", "dragover"].forEach((ev) => bulkCard.addEventListener(ev, (e) => { e.preventDefault(); bulkCard.classList.add("drop"); }));
+["dragleave", "drop"].forEach((ev) => bulkCard.addEventListener(ev, (e) => { e.preventDefault(); if (ev === "drop" || !bulkCard.contains(e.relatedTarget)) bulkCard.classList.remove("drop"); }));
+bulkCard.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f) importFile(f); });
 function startPolling() { pollBulk(); if (!bulkTimer) bulkTimer = setInterval(pollBulk, 1000); }
 async function pollBulk() {
   const res = await api("/api/bulk/status"); if (!res.ok) return;
@@ -569,9 +603,13 @@ $("#bulk-zip").onclick = async () => {
   post("/api/reveal", { path: res.data.path });
 };
 $("#bulk-import").onclick = () => $("#scan-file").click();
-$("#scan-file").onchange = async () => {
+$("#scan-file").onchange = () => {
   const f = $("#scan-file").files[0]; if (!f) return;
   $("#scan-file").value = "";
+  importFile(f);
+};
+async function importFile(f) {
+  if (!/\.rbx[lm]x?$/i.test(f.name)) { showNote($("#bulk-note"), "err", "Drop a .rbxl, .rbxm, .rbxlx or .rbxmx file."); return; }
   showNote($("#bulk-note"), "info", "Scanning <b>" + esc(f.name) + "</b>…");
   const r = await fetch("/api/scan-file", { method: "POST", body: f });
   const res = await r.json().catch(() => ({ ok: false, error: "scan failed" }));
@@ -586,9 +624,14 @@ $("#scan-file").onchange = async () => {
   const total = have.size + fresh.length;
   showNote($("#bulk-note"), total > 500 ? "err" : "ok", "Found " + res.data.ids.length + " asset ids in <b>" + esc(f.name) + "</b>, added " + fresh.length + " new." +
     (total > 500 ? " That's over 500, run the first 500 then paste the rest in a second batch." : ""));
-};
+}
 $("#bulk-cancel").onclick = () => post("/api/bulk/cancel", {});
 pollBulk().then(() => { if ($("#bulk-cancel").disabled === false) startPolling(); });
+$("#mesh-obj").onchange = async () => {
+  const res = await post("/api/settings", { mesh_obj: $("#mesh-obj").checked });
+  if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
+  showNote($("#settings-note"), "ok", res.data.mesh_obj ? "Meshes also get saved as .obj." : "Meshes are saved as .mesh only.");
+};
 $("#sort-type").onchange = async () => {
   const res = await post("/api/settings", { sort_by_type: $("#sort-type").checked });
   if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
@@ -607,10 +650,18 @@ $("#save-dir-btn").onclick = async () => {
 
 // ---- History ----
 function fmtWhen(ms) { const n = Number(ms); if (!n) return ""; return new Date(n).toLocaleString(); }
+let histAll = [];
 async function loadHistory() {
-  const res = await api("/api/history"); const list = $("#hist-list");
-  if (!res.ok || !res.data.length) { list.innerHTML = '<div class="empty">No downloads yet.</div>'; return; }
-  list.innerHTML = res.data.map((h) =>
+  const res = await api("/api/history");
+  histAll = res.ok ? res.data : [];
+  renderHistory();
+}
+$("#hist-search").addEventListener("input", renderHistory);
+function renderHistory() {
+  const list = $("#hist-list"), q = $("#hist-search").value.trim().toLowerCase();
+  const rows = histAll.filter((h) => !q || (h.name + " " + h.type_label + " " + h.id).toLowerCase().includes(q));
+  if (!rows.length) { list.innerHTML = '<div class="empty">' + (histAll.length ? "Nothing matches." : "No downloads yet.") + "</div>"; return; }
+  list.innerHTML = rows.map((h) =>
     '<div class="hist-item"><div class="hist-main">' +
     '<div class="hist-name">' + esc(h.name) + ' <span>#' + h.id + '</span></div>' +
     '<div class="hist-sub">' + esc(h.type_label) + " · " + esc(h.method) + " · " + esc(fmtWhen(h.when)) + '</div>' +

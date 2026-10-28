@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,7 +18,12 @@ pub struct Roblox {
 struct Cache {
     places: HashMap<(String, i64, usize), (Instant, Vec<PlaceRef>)>,
     groups: HashMap<i64, (Instant, Vec<GroupRef>)>,
-    winners: HashMap<(String, i64), Vec<PlaceRef>>,
+    winners: HashMap<String, Vec<PlaceRef>>,
+    details: HashMap<i64, AssetDetails>,
+}
+
+fn places_file() -> std::path::PathBuf {
+    crate::store::config_dir().join("places.json")
 }
 
 fn fresh<T: Clone>(entry: Option<&(Instant, T)>) -> Option<T> {
@@ -52,7 +57,7 @@ pub struct GroupRef {
     pub rank: i64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PlaceRef {
     pub place_id: i64,
     pub name: String,
@@ -65,7 +70,12 @@ impl Roblox {
             .gzip(true)
             .build()
             .expect("http client");
-        Self { http, cache: Arc::default() }
+        let winners = std::fs::read_to_string(places_file())
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let cache = Cache { winners, ..Default::default() };
+        Self { http, cache: Arc::new(Mutex::new(cache)) }
     }
 
     fn cache(&self) -> std::sync::MutexGuard<'_, Cache> {
@@ -92,20 +102,62 @@ impl Roblox {
     }
 
     pub fn known_places(&self, creator_type: &str, creator_id: i64) -> Vec<PlaceRef> {
-        let key = (creator_type.to_ascii_lowercase(), creator_id);
+        let key = format!("{}:{creator_id}", creator_type.to_ascii_lowercase());
         self.cache().winners.get(&key).cloned().unwrap_or_default()
     }
 
     pub fn remember_place(&self, creator_type: &str, creator_id: i64, place: &PlaceRef) {
-        let key = (creator_type.to_ascii_lowercase(), creator_id);
+        let key = format!("{}:{creator_id}", creator_type.to_ascii_lowercase());
         let mut c = self.cache();
         let list = c.winners.entry(key).or_default();
+        if list.first().is_some_and(|p| p.place_id == place.place_id) {
+            return;
+        }
         list.retain(|p| p.place_id != place.place_id);
         list.insert(0, place.clone());
         list.truncate(5);
+        if let Ok(json) = serde_json::to_vec(&c.winners) {
+            let _ = std::fs::write(places_file(), json);
+        }
+    }
+
+    pub async fn prefetch_details(&self, cookie: &str, ids: &[i64]) -> usize {
+        let mut found = 0;
+        for chunk in ids.chunks(50) {
+            let list: Vec<String> = chunk.iter().map(|i| i.to_string()).collect();
+            let url = format!("https://develop.roblox.com/v1/assets?assetIds={}", list.join(","));
+            let Ok(resp) = self.http.get(&url).header("Cookie", format!(".ROBLOSECURITY={cookie}")).send().await else {
+                continue;
+            };
+            let Ok(v) = resp.json::<Value>().await else { continue };
+            for it in v["data"].as_array().into_iter().flatten() {
+                let Some(id) = it["id"].as_i64() else { continue };
+                let creator = &it["creator"];
+                let ctype = match creator["type"].as_str() {
+                    Some(t) => t.to_string(),
+                    None if creator["typeId"].as_i64() == Some(2) => "Group".into(),
+                    None => "User".into(),
+                };
+                let d = AssetDetails {
+                    id,
+                    name: it["name"].as_str().unwrap_or("Unknown").to_string(),
+                    description: it["description"].as_str().unwrap_or("").to_string(),
+                    asset_type_id: it["typeId"].as_i64().unwrap_or(0),
+                    creator_type: ctype,
+                    creator_id: creator["targetId"].as_i64().unwrap_or(0),
+                    creator_name: String::new(),
+                };
+                self.cache().details.insert(id, d);
+                found += 1;
+            }
+        }
+        found
     }
 
     pub async fn asset_details(&self, id: i64) -> Result<AssetDetails> {
+        if let Some(d) = self.cache().details.get(&id) {
+            return Ok(d.clone());
+        }
         let url = format!("https://economy.roblox.com/v2/assets/{id}/details");
         let v: Value = self.http.get(&url).send().await?.json().await?;
         if v.get("errors").is_some() {
@@ -123,12 +175,17 @@ impl Roblox {
         })
     }
 
-    pub async fn thumbnail_url(&self, id: i64) -> Option<String> {
+    pub async fn thumbnail(&self, id: i64) -> (Option<String>, Option<String>) {
         let url = format!(
             "https://thumbnails.roblox.com/v1/assets?assetIds={id}&size=420x420&format=Png"
         );
-        let v: Value = self.http.get(&url).send().await.ok()?.json().await.ok()?;
-        v["data"][0]["imageUrl"].as_str().map(|s| s.to_string())
+        let v: Option<Value> = match self.http.get(&url).send().await {
+            Ok(r) => r.json().await.ok(),
+            Err(_) => None,
+        };
+        let Some(v) = v else { return (None, None) };
+        let t = &v["data"][0];
+        (t["imageUrl"].as_str().map(String::from), t["state"].as_str().map(String::from))
     }
 
     pub async fn user_headshots(&self, ids: &[i64]) -> std::collections::HashMap<i64, String> {
