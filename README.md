@@ -26,9 +26,9 @@ The exe ends up in `target/release/rbxyoinker.exe`.
 
 ## Usage
 
-When you run it, a browser tab opens. If it doesn't, the console window prints the
-address to open. Running the exe again while it's already open just brings the tab back.
-There's no window, to close it use **Quit** at the bottom of the page.
+When you run it, a browser tab opens. If it doesn't, go to http://127.0.0.1:48620.
+Running the exe again while it's already open just brings the tab back. There's no
+window, to close it use **Quit** at the bottom of the page.
 
 - **Download** - paste an id or any roblox.com / create.roblox.com link and hit Fetch.
   You get a preview with the type, whether it's public or private, and a Play button
