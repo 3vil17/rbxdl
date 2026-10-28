@@ -1,10 +1,14 @@
 [package]
-name = "rbxdl"
+name = "rbxyoinker"
 version = "0.1.0"
 edition = "2021"
-description = "A local Roblox asset downloader with a web UI"
+description = "Local Roblox asset downloader with a web UI"
+authors = ["3vil17"]
 license = "MIT"
-repository = "https://github.com/3vil17/rbxdl"
+repository = "https://github.com/3vil17/rbxyoinker"
+
+[build-dependencies]
+winresource = "0.1"
 
 [dependencies]
 axum = "0.7"

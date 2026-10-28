@@ -67,7 +67,7 @@ fn config_dir() -> PathBuf {
 
 pub fn default_save_dir() -> PathBuf {
     let base = dirs::download_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("RBXDL")
+    base.join("rbxyoinker")
 }
 
 #[derive(Serialize, Deserialize, Clone)]

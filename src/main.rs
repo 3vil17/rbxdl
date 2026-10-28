@@ -16,7 +16,7 @@ fn main() {
         }
     };
     if let Err(e) = rt.block_on(server::run()) {
-        eprintln!("rbxdl exited with an error: {e}");
+        eprintln!("rbxyoinker exited with an error: {e}");
         std::process::exit(1);
     }
 }

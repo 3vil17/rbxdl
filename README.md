@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src/web/logo.png" width="96" alt="rbxdl logo" />
+  <img src="src/web/logo.png" width="96" alt="rbxyoinker logo" />
 </p>
 
-# rbxdl
+# rbxyoinker
 
 Roblox asset downloader that runs locally. Start the exe, it opens in your browser,
 paste an asset id or link, and it saves the file. Everything goes straight from your
@@ -13,7 +13,7 @@ else that has an asset id. Decals get followed to the actual image.
 
 ## Installation
 
-Download `rbxdl.exe` from [releases](https://github.com/3vil17/rbxdl/releases) and run it.
+Download `rbxyoinker.exe` from [releases](https://github.com/3vil17/rbxyoinker/releases) and run it.
 Windows only for now.
 
 Or build it (Rust + MSVC build tools):
@@ -22,7 +22,7 @@ Or build it (Rust + MSVC build tools):
 cargo build --release
 ```
 
-The exe ends up in `target/release/rbxdl.exe`.
+The exe ends up in `target/release/rbxyoinker.exe`.
 
 ## Usage
 
@@ -38,7 +38,7 @@ address to open.
 - **Settings** - API key, cookies and the download folder.
 - **History** - past downloads with a button to open the file in Explorer.
 
-Files go to `Downloads/RBXDL` by default, you can pick another folder in Settings.
+Files go to `Downloads/rbxyoinker` by default, you can pick another folder in Settings.
 
 ## Credentials
 
@@ -63,3 +63,7 @@ accounts have access, or the asset got moderated or deleted.
 ## Notes
 
 Personal project, still early. Issues and PRs welcome.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Keep the copyright notice if you reuse the code.

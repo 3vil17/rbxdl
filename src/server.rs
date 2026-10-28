@@ -67,7 +67,7 @@ pub async fn run() -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let url = format!("http://{addr}");
-    println!("rbxdl running at {url}");
+    println!("rbxyoinker running at {url}");
     let _ = open::that(&url);
 
     axum::serve(listener, app).await
