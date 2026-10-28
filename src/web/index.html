@@ -169,9 +169,10 @@
   #changes-body .rel + .rel { border-top: 1px solid var(--card-border); margin-top: 12px; padding-top: 12px; }
   #changes-body .tagl { font-weight: 600; color: #fff; font-size: 0.85rem; }
   #changes-body .tagl span { color: var(--green); font-weight: 500; font-size: 0.7rem; margin-left: 6px; }
-  #changes-body p { margin: 6px 0 0; }
-  #changes-body .h { color: rgb(212,212,212); font-weight: 500; }
-  #changes-body ul { margin: 6px 0 0; }
+  #changes-body p, #forced-notes p { margin: 6px 0 0; }
+  #changes-body .h, #forced-notes .h { color: rgb(212,212,212); font-weight: 500; }
+  #changes-body ul, #forced-notes ul { margin: 6px 0 0; }
+  #forced-notes b, #changes-body b { color: rgb(224,224,224); font-weight: 600; }
   @media (max-width: 600px) { .ckrow .tok { display: none; } }
   .fgroups { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
   .fgroups:empty { display: none; }
@@ -579,7 +580,7 @@
       <p class="title" style="margin:0; font-size:0.95rem; font-weight:600; color:#fff">Important update required</p>
     </div>
     <p style="font-size:0.82rem; color:rgb(170,170,170); margin:14px 0 0">Update to <b style="color:#fff" id="forced-ver"></b> to keep using rbxyoinker.</p>
-    <p id="forced-notes" style="font-size:0.78rem; color:rgb(136,136,136); margin:10px 0 0; white-space:pre-wrap; max-height:220px; overflow-y:auto"></p>
+    <div id="forced-notes" style="font-size:0.8rem; line-height:1.65; color:rgb(170,170,170); margin:10px 0 0; max-height:220px; overflow-y:auto"></div>
     <div class="fbtns">
       <button class="btn" id="forced-btn">Update now</button>
       <a class="btn" id="forced-link" target="_blank" style="text-decoration:none; color:rgb(212,212,212); font-weight:500">Open on GitHub</a>
@@ -1317,7 +1318,7 @@ api("/api/update").then((res) => {
   updateInfo = res.data;
   if (res.data.important) {
     $("#forced-ver").textContent = res.data.latest + " (you have v" + res.data.current + ")";
-    $("#forced-notes").textContent = res.data.notes || "This update fixes something important, so older versions can't keep running.";
+    $("#forced-notes").innerHTML = mdLite(res.data.notes || "This update fixes something important, so older versions can't keep running.");
     $("#forced-link").href = res.data.url;
     $("#forced").style.display = "flex";
     const fb = $("#forced-btn");

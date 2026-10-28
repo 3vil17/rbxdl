@@ -20,6 +20,42 @@ struct Cache {
     groups: HashMap<i64, (Instant, Vec<GroupRef>)>,
     winners: HashMap<String, Vec<PlaceRef>>,
     details: HashMap<i64, AssetDetails>,
+    releases: Option<(Instant, Vec<Release>)>,
+}
+
+fn releases_file() -> std::path::PathBuf {
+    crate::store::config_dir().join("releases.json")
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedReleases {
+    etag: String,
+    body: String,
+}
+
+fn parse_releases(body: &str) -> Option<Vec<Release>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let list = v
+        .as_array()?
+        .iter()
+        .filter(|r| r["draft"].as_bool() != Some(true) && r["prerelease"].as_bool() != Some(true))
+        .filter_map(|r| {
+            let exe_url = r["assets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|a| a["name"].as_str().is_some_and(|n| n.to_ascii_lowercase().ends_with(".exe")))
+                .and_then(|a| a["browser_download_url"].as_str())
+                .map(String::from);
+            Some(Release {
+                tag: r["tag_name"].as_str()?.to_string(),
+                url: r["html_url"].as_str().unwrap_or_default().to_string(),
+                notes: r["body"].as_str().unwrap_or_default().to_string(),
+                exe_url,
+            })
+        })
+        .collect();
+    Some(list)
 }
 
 fn places_file() -> std::path::PathBuf {
@@ -50,6 +86,7 @@ pub struct CookieInfo {
     pub robux: Option<i64>,
 }
 
+#[derive(Clone)]
 pub struct Release {
     pub tag: String,
     pub url: String,
@@ -435,37 +472,37 @@ impl Roblox {
         Err(Error::Other("upload is still processing after 30s, check the group's creations".into()))
     }
 
+    /// GitHub allows 60 unauthenticated API calls an hour per IP, so the list
+    /// is kept in memory for a couple of minutes and on disk with its ETag.
+    /// A 304 doesn't count toward the limit, and when GitHub refuses the last
+    /// list it gave is used instead.
     pub async fn releases(&self) -> Option<Vec<Release>> {
-        let v: Value = self
+        if let Some((at, list)) = &self.cache().releases {
+            if at.elapsed() < Duration::from_secs(120) {
+                return Some(list.clone());
+            }
+        }
+        let saved: Option<SavedReleases> = std::fs::read(releases_file()).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let mut req = self
             .http
             .get("https://api.github.com/repos/3vil17/rbxyoinker/releases?per_page=30")
-            .header("User-Agent", "rbxyoinker")
-            .send()
-            .await
-            .ok()?
-            .json()
-            .await
-            .ok()?;
-        let list = v
-            .as_array()?
-            .iter()
-            .filter(|r| r["draft"].as_bool() != Some(true) && r["prerelease"].as_bool() != Some(true))
-            .filter_map(|r| {
-                let exe_url = r["assets"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|a| a["name"].as_str().is_some_and(|n| n.to_ascii_lowercase().ends_with(".exe")))
-                    .and_then(|a| a["browser_download_url"].as_str())
-                    .map(String::from);
-                Some(Release {
-                    tag: r["tag_name"].as_str()?.to_string(),
-                    url: r["html_url"].as_str().unwrap_or_default().to_string(),
-                    notes: r["body"].as_str().unwrap_or_default().to_string(),
-                    exe_url,
-                })
-            })
-            .collect();
+            .header("User-Agent", "rbxyoinker");
+        if let Some(etag) = saved.as_ref().map(|s| s.etag.as_str()).filter(|e| !e.is_empty()) {
+            req = req.header("If-None-Match", etag);
+        }
+        let mut body = None;
+        if let Ok(resp) = req.send().await {
+            if resp.status().is_success() {
+                let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+                if let Ok(text) = resp.text().await {
+                    let _ = std::fs::write(releases_file(), serde_json::to_vec(&SavedReleases { etag, body: text.clone() }).unwrap_or_default());
+                    body = Some(text);
+                }
+            }
+        }
+        let body = body.or_else(|| saved.map(|s| s.body))?;
+        let list = parse_releases(&body)?;
+        self.cache().releases = Some((Instant::now(), list.clone()));
         Some(list)
     }
 

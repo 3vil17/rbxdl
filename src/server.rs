@@ -608,7 +608,7 @@ async fn changelog_seen() -> Json<Value> {
 async fn install_update(State(st): State<AppState>) -> Json<Value> {
     let current = env!("CARGO_PKG_VERSION");
     let Some(releases) = st.rb.releases().await else {
-        return fail("couldn't reach GitHub");
+        return fail("couldn't get the release list from GitHub, it may be rate limiting this network. Try again in a few minutes");
     };
     let Some(latest) = releases
         .iter()
