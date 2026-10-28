@@ -107,6 +107,14 @@
   .st.have { background: rgba(255,255,255,0.05); color: rgb(59,186,87); }
   #update-line { margin-top: 2px; }
   .badge.mod { background: rgba(236,59,71,0.12); color: rgb(208,96,112); margin-left: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips:empty { display: none; }
+  .chip { appearance: none; font-family: var(--font-sans); font-size: 12px; padding: 4px 10px; border-radius: 99px; cursor: pointer;
+    background: rgba(59,234,87,0.1); color: rgb(59,186,87); border: 1px solid rgba(59,234,87,0.25); transition: 0.2s; }
+  .chip.off { background: rgba(255,255,255,0.04); color: rgb(102,102,102); border-color: rgba(255,255,255,0.08); text-decoration: line-through; }
+  .rthumb { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: rgb(22,22,22);
+    border: 1px solid rgba(255,255,255,0.08); }
+  #health-line { color: rgb(208, 96, 112); }
   .drop { outline: 1px dashed rgba(59,234,87,0.6); outline-offset: -1px; }
   .foot { text-align: center; font-size: 0.72rem; color: rgb(102, 102, 102); margin: 6px 0 0; }
   .foot b { color: var(--green); font-weight: 500; }
@@ -228,6 +236,7 @@
           Runs <span class="g">locally</span>. Credentials are stored in Windows Credential Manager and never leave this machine.
         </p>
         <p id="update-line" style="display:none"></p>
+        <p id="health-line" style="display:none"></p>
       </div>
       <nav>
         <button data-tab="download" class="active" data-i="download">Download</button>
@@ -273,6 +282,13 @@
         <div class="note" id="dl-note"></div>
       </div>
 
+      <div class="card" id="recent-card" style="display:none">
+        <div class="section-head">
+          <h2 class="sect" style="margin:0"><i data-i="history"></i>Recent</h2>
+        </div>
+        <div class="rows" id="recent-list"></div>
+      </div>
+
       <div class="card usage">
         <h2 class="sect">Usage</h2>
         <ul>
@@ -293,8 +309,10 @@
         <textarea id="bulk-input" spellcheck="false" placeholder="ids or links, separated by spaces, commas or new lines (max 500)"></textarea>
         <div class="counts">
           <span><b id="bulk-count">0</b> / 500 ids</span>
+          <span id="preview-state"></span>
           <label class="check"><input type="checkbox" id="skip-existing" checked /> Skip ones I already have</label>
         </div>
+        <div class="chips" id="type-chips"></div>
         <input type="file" id="scan-file" accept=".rbxl,.rbxm,.rbxlx,.rbxmx" style="display:none" />
         <div class="fbtns">
           <button class="btn" id="bulk-start" data-i="download">Download all</button>
@@ -305,6 +323,7 @@
           <button class="btn" id="bulk-retry" data-i="refresh">Retry failed</button>
           <button class="btn" id="bulk-zip" data-i="archive">Zip everything</button>
           <button class="btn" id="bulk-copy" data-i="copy">Copy failed ids</button>
+          <button class="btn" id="bulk-clear" data-i="trash">Clear list</button>
         </div>
         <div class="bar"><div id="bulk-bar"></div></div>
         <div class="counts" id="bulk-counts"></div>
@@ -415,12 +434,14 @@ document.querySelectorAll("[data-i]").forEach((el) => {
 // Roblox failure details come back joined by " | ", one line per step
 function errHtml(msg) { return String(msg || "").split(" | ").map((l) => '<span class="line">' + esc(l) + "</span>").join(""); }
 
+function store(k, v) { try { if (v === undefined) return localStorage.getItem("ryk_" + k); localStorage.setItem("ryk_" + k, v); } catch (e) { return null; } }
 let accTimer = null;
 document.querySelectorAll("nav button").forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     const tab = b.dataset.tab;
+    store("tab", tab);
     ["download", "bulk", "accounts", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
     clearInterval(accTimer);
     if (tab === "settings") loadSettings();
@@ -428,6 +449,25 @@ document.querySelectorAll("nav button").forEach((b) => {
     if (tab === "accounts") { loadAccounts(); accTimer = setInterval(loadAccounts, 2000); }
   };
 });
+
+// ---- Health + recent ----
+async function checkHealth() {
+  const res = await api("/api/accounts"); const el = $("#health-line");
+  const dead = res.ok ? res.data.filter((a) => !a.alive) : [];
+  if (!dead.length) { el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = svg("users").replace("<svg", '<svg class="ic" style="stroke:rgb(208,96,112)"') + dead.length + " of " + res.data.length +
+    " cookie" + (res.data.length > 1 ? "s" : "") + " stopped working (" + dead.map((a) => a.username ? "@" + esc(a.username) : "unknown").join(", ") + "). Replace " + (dead.length > 1 ? "them" : "it") + " in Settings.";
+}
+async function loadRecent() {
+  const res = await api("/api/history"); const rows = res.ok ? res.data.slice(0, 5) : [];
+  $("#recent-card").style.display = rows.length ? "" : "none";
+  $("#recent-list").innerHTML = rows.map((h, i) =>
+    '<div class="row"><div class="main"><div class="t">' + esc(h.name) + " <span>#" + h.id + "</span></div>" +
+    '<div class="s">' + esc(h.type_label) + " · " + esc(fmtWhen(h.when)) + "</div></div>" +
+    '<button class="btn" data-r="' + i + '">' + svg("folder") + "</button></div>").join("");
+  $("#recent-list").querySelectorAll("button[data-r]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: rows[b.dataset.r].path }); });
+}
 
 // ---- Download ----
 let current = null;
@@ -466,6 +506,7 @@ async function doDownload() {
     "Saved <b>" + esc(d.name) + "</b> via <b>" + esc(d.method) + "</b><br><code>" + esc(d.path) + "</code>" +
     '<div class="acts"><button class="btn" id="reveal-btn">' + svg("folder") + ' Show in folder</button></div>');
   const rb = $("#reveal-btn"); if (rb) rb.onclick = () => post("/api/reveal", { path: d.path });
+  loadRecent();
 }
 $("#play-btn").onclick = () => {
   if (!current) return;
@@ -540,10 +581,42 @@ $("#browse-dir").onclick = async () => {
 
 // ---- Bulk ----
 function splitIds(text) { return text.split(/[\s,;]+/).map((s) => (s.match(/\d+/g) || []).sort((a, b) => b.length - a.length)[0]).filter(Boolean); }
+let preview = null, previewTimer = null, previewSeq = 0;
+const typeOff = new Set();
+const thumbs = {};
 $("#bulk-input").addEventListener("input", () => {
   const n = new Set(splitIds($("#bulk-input").value)).size;
   $("#bulk-count").textContent = n; $("#bulk-count").style.color = n > 500 ? "var(--red)" : "";
+  preview = null; $("#type-chips").innerHTML = ""; $("#preview-state").textContent = "";
+  clearTimeout(previewTimer);
+  if (n && n <= 500) previewTimer = setTimeout(loadPreview, 700);
 });
+async function loadPreview() {
+  const ids = [...new Set(splitIds($("#bulk-input").value))];
+  if (!ids.length) return null;
+  const seq = ++previewSeq;
+  $("#preview-state").innerHTML = '<span class="spinner"></span> checking types';
+  const res = await post("/api/bulk/preview", { ids });
+  if (seq !== previewSeq) return preview;
+  $("#preview-state").textContent = "";
+  if (!res.ok) return null;
+  preview = res.data;
+  preview.forEach((x) => { if (x.thumb) thumbs[x.id] = x.thumb; });
+  renderChips();
+  return preview;
+}
+function renderChips() {
+  const counts = {};
+  (preview || []).forEach((x) => { counts[x.type] = (counts[x.type] || 0) + 1; });
+  const types = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  $("#type-chips").innerHTML = types.length > 1 ? types.map((t) =>
+    '<button class="chip' + (typeOff.has(t) ? " off" : "") + '" data-t="' + esc(t) + '">' + esc(t) + " " + counts[t] + "</button>").join("") : "";
+  $("#type-chips").querySelectorAll(".chip").forEach((c) => {
+    c.onclick = () => { const t = c.dataset.t; typeOff.has(t) ? typeOff.delete(t) : typeOff.add(t); renderChips(); };
+  });
+  const picked = (preview || []).filter((x) => !typeOff.has(x.type)).length;
+  $("#bulk-count").textContent = picked;
+}
 let bulkTimer = null;
 function renderBulk(d) {
   const it = d.items, c = { ok: 0, have: 0, error: 0, skipped: 0, waiting: 0 };
@@ -553,7 +626,7 @@ function renderBulk(d) {
   $("#bulk-counts").innerHTML = "<span><b>" + done + "</b> / " + it.length + " done</span><span><b>" + c.ok + "</b> saved</span>" + (c.have ? "<span><b>" + c.have + "</b> already had</span>" : "") + "<span><b>" + c.error + "</b> failed</span>" +
     (c.waiting ? "<span><b>" + c.waiting + "</b> waiting on rate limit</span>" : "") + (c.skipped ? "<span><b>" + c.skipped + "</b> skipped</span>" : "");
   $("#bulk-rows").innerHTML = it.map((x, i) =>
-    '<div class="row"><div class="main"><div class="t">' + esc(x.name || "asset") + " <span>#" + x.id + "</span></div>" +
+    '<div class="row">' + (thumbs[x.id] ? '<img class="rthumb" loading="lazy" src="' + esc(thumbs[x.id]) + '" alt="" />' : '<span class="rthumb"></span>') + '<div class="main"><div class="t">' + esc(x.name || "asset") + " <span>#" + x.id + "</span></div>" +
     (x.error ? '<div class="s err">' + errHtml(x.error) + "</div>" : x.method ? '<div class="s">' + esc(x.method) + "</div>" : "") +
     '</div><span class="st ' + x.state + '">' + x.state + "</span>" +
     (x.path ? '<button class="btn" data-p="' + i + '">' + svg("folder") + "</button>" : "") + "</div>").join("");
@@ -563,6 +636,7 @@ function renderBulk(d) {
   $("#bulk-retry").disabled = !(c.error + c.skipped);
   $("#bulk-zip").disabled = !(c.ok + c.have);
   $("#bulk-copy").disabled = !c.error;
+  $("#bulk-clear").disabled = !!d.running;
   lastBulk = it;
 }
 let lastBulk = [];
@@ -581,9 +655,20 @@ async function pollBulk() {
   renderBulk(res.data);
   if (!res.data.running) { clearInterval(bulkTimer); bulkTimer = null; }
 }
+$("#bulk-clear").onclick = async () => {
+  const res = await post("/api/bulk/clear", {});
+  if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
+  hideNote($("#bulk-note")); $("#bulk-bar").style.width = "0"; $("#bulk-counts").innerHTML = "";
+  pollBulk();
+};
+$("#skip-existing").checked = store("skip") !== "0";
+$("#skip-existing").onchange = () => store("skip", $("#skip-existing").checked ? "1" : "0");
 $("#bulk-start").onclick = async () => {
-  const ids = splitIds($("#bulk-input").value);
   hideNote($("#bulk-note"));
+  clearTimeout(previewTimer);
+  const p = preview || await loadPreview();
+  const ids = p ? p.filter((x) => !typeOff.has(x.type)).map((x) => x.id) : splitIds($("#bulk-input").value);
+  if (!ids.length) { showNote($("#bulk-note"), "err", "Every type is switched off."); return; }
   const res = await post("/api/bulk", { ids, skip_existing: $("#skip-existing").checked });
   if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
   showNote($("#bulk-note"), "info", "Started " + res.data.total + " assets with " + res.data.workers + " workers.");
@@ -673,6 +758,10 @@ function renderHistory() {
 $("#clear-hist").onclick = async () => { await post("/api/history/clear", {}); loadHistory(); };
 
 $("#asset-input").focus();
+checkHealth();
+loadRecent();
+const lastTab = store("tab");
+if (lastTab && lastTab !== "download") { const b = document.querySelector('nav button[data-tab="' + lastTab + '"]'); if (b) b.click(); }
 </script>
 </body>
 </html>

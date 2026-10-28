@@ -188,6 +188,29 @@ impl Roblox {
         (t["imageUrl"].as_str().map(String::from), t["state"].as_str().map(String::from))
     }
 
+    pub fn cached_details(&self, id: i64) -> Option<AssetDetails> {
+        self.cache().details.get(&id).cloned()
+    }
+
+    pub async fn thumbnails(&self, ids: &[i64]) -> HashMap<i64, String> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(100) {
+            let list: Vec<String> = chunk.iter().map(|i| i.to_string()).collect();
+            let url = format!(
+                "https://thumbnails.roblox.com/v1/assets?assetIds={}&size=150x150&format=Png",
+                list.join(",")
+            );
+            let Ok(resp) = self.http.get(&url).send().await else { continue };
+            let Ok(v) = resp.json::<Value>().await else { continue };
+            for it in v["data"].as_array().into_iter().flatten() {
+                if let (Some(id), Some(img)) = (it["targetId"].as_i64(), it["imageUrl"].as_str()) {
+                    out.insert(id, img.to_string());
+                }
+            }
+        }
+        out
+    }
+
     pub async fn user_headshots(&self, ids: &[i64]) -> std::collections::HashMap<i64, String> {
         let mut out = std::collections::HashMap::new();
         if ids.is_empty() {

@@ -75,6 +75,8 @@ pub async fn run() -> std::io::Result<()> {
         .route("/api/bulk", post(bulk_start))
         .route("/api/bulk/status", get(bulk_status))
         .route("/api/bulk/cancel", post(bulk_cancel))
+        .route("/api/bulk/preview", post(bulk_preview))
+        .route("/api/bulk/clear", post(bulk_clear))
         .route("/api/bulk/retry", post(bulk_retry))
         .route("/api/bulk/zip", post(bulk_zip))
         .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
@@ -480,6 +482,52 @@ async fn run_bulk(st: AppState, todo: Vec<usize>, workers: usize) {
 async fn bulk_status(State(st): State<AppState>) -> Json<Value> {
     let b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
     ok(json!({ "running": b.running, "prefetched": b.prefetched, "items": b.items }))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {
+    ids: Vec<String>,
+}
+
+async fn bulk_preview(State(st): State<AppState>, Json(body): Json<PreviewBody>) -> Json<Value> {
+    let mut ids: Vec<i64> = Vec::new();
+    for raw in &body.ids {
+        if let Some(id) = parse_asset_id(raw) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids.truncate(BULK_MAX);
+    let missing: Vec<i64> = ids.iter().copied().filter(|id| st.rb.cached_details(*id).is_none()).collect();
+    if !missing.is_empty() {
+        if let Some(lease) = st.pool.acquire(&[]).await {
+            st.rb.prefetch_details(&lease.cookie, &missing).await;
+        }
+    }
+    let thumbs = st.rb.thumbnails(&ids).await;
+    let items: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            let d = st.rb.cached_details(*id);
+            json!({
+                "id": id.to_string(),
+                "name": d.as_ref().map(|d| d.name.clone()),
+                "type": d.map_or("Unknown", |d| crate::convert::type_label(d.asset_type_id)),
+                "thumb": thumbs.get(id),
+            })
+        })
+        .collect();
+    ok(json!(items))
+}
+
+async fn bulk_clear(State(st): State<AppState>) -> Json<Value> {
+    let mut b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+    if b.running {
+        return fail("can't clear while a batch is running");
+    }
+    b.items.clear();
+    ok(Value::Null)
 }
 
 async fn bulk_cancel(State(st): State<AppState>) -> Json<Value> {
