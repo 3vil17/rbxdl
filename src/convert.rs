@@ -11,6 +11,9 @@ pub fn extension_for(bytes: &[u8], asset_type_id: i64) -> &'static str {
     if bytes.starts_with(b"ID3") || bytes.starts_with(b"\xff\xfb") || bytes.starts_with(b"\xff\xf3") {
         return "mp3";
     }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        return "webp";
+    }
     if bytes.starts_with(b"RIFF") {
         return "wav";
     }
@@ -84,6 +87,15 @@ pub fn mime_for(bytes: &[u8]) -> &'static str {
         "wav" => "audio/wav",
         "png" => "image/png",
         "jpg" => "image/jpeg",
+        "webp" => "image/webp",
         _ => "application/octet-stream",
     }
+}
+
+/// Re-encodes a jpg or webp as png. Anything else, or a decode failure, gives None.
+pub fn to_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
 }

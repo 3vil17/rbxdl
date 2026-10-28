@@ -259,6 +259,26 @@ impl Roblox {
         out
     }
 
+    /// Bundles list their parts as items, outfits as assets. Both are public.
+    pub async fn bundle_assets(&self, id: i64) -> Option<(String, Vec<i64>)> {
+        let url = format!("https://catalog.roblox.com/v1/bundles/{id}/details");
+        let v: Value = self.http.get(&url).send().await.ok()?.json().await.ok()?;
+        let ids = v["items"]
+            .as_array()?
+            .iter()
+            .filter(|it| it["type"].as_str() == Some("Asset"))
+            .filter_map(|it| it["id"].as_i64())
+            .collect();
+        Some((v["name"].as_str().unwrap_or("bundle").to_string(), ids))
+    }
+
+    pub async fn outfit_assets(&self, id: i64) -> Option<(String, Vec<i64>)> {
+        let url = format!("https://avatar.roblox.com/v3/outfits/{id}/details");
+        let v: Value = self.http.get(&url).send().await.ok()?.json().await.ok()?;
+        let ids = v["assets"].as_array()?.iter().filter_map(|it| it["id"].as_i64()).collect();
+        Some((v["name"].as_str().unwrap_or("outfit").to_string(), ids))
+    }
+
     pub async fn releases(&self) -> Option<Vec<Release>> {
         let v: Value = self
             .http

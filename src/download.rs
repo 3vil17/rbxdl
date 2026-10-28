@@ -23,13 +23,33 @@ fn now_millis() -> String {
         .unwrap_or_default()
 }
 
-fn sanitize(name: &str) -> String {
-    let cleaned: String = name
+fn clean(text: &str, max: usize) -> String {
+    let cleaned: String = text
         .chars()
         .map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c })
         .collect();
-    let trimmed = cleaned.trim().trim_matches('.').trim();
-    if trimmed.is_empty() { "asset".into() } else { trimmed.chars().take(80).collect() }
+    cleaned.trim().trim_matches('.').trim().chars().take(max).collect()
+}
+
+fn sanitize(name: &str) -> String {
+    let out = clean(name, 80);
+    if out.is_empty() { "asset".into() } else { out }
+}
+
+/// Fills {name} {id} {type} {version} in the user's template. An old version
+/// always gets a _vN suffix when the template doesn't place {version} itself.
+pub fn file_stem(template: &str, name: &str, id: i64, type_label: &str, version: Option<u32>) -> String {
+    let t = if template.trim().is_empty() { store::DEFAULT_TEMPLATE } else { template };
+    let mut out = t
+        .replace("{name}", &sanitize(name))
+        .replace("{id}", &id.to_string())
+        .replace("{type}", type_label)
+        .replace("{version}", &version.map(|v| v.to_string()).unwrap_or_default());
+    if let Some(v) = version.filter(|_| !t.contains("{version}")) {
+        out.push_str(&format!("_v{v}"));
+    }
+    let out = clean(&out, 150);
+    if out.is_empty() { format!("asset_{id}") } else { out }
 }
 
 pub async fn fetch_and_save(
@@ -71,12 +91,15 @@ pub async fn fetch_and_save(
         }
     }
 
-    let ext = convert::extension_for(&attempt.bytes, atype);
+    let mut ext = convert::extension_for(&attempt.bytes, atype);
+    if settings.images_png && matches!(ext, "jpg" | "webp") {
+        if let Some(png) = convert::to_png(&attempt.bytes) {
+            attempt.bytes = png;
+            ext = "png";
+        }
+    }
     let type_label = convert::type_label(atype0).to_string();
-    let filename = match version {
-        Some(v) => format!("{}_{}_v{}.{}", sanitize(&name), id, v, ext),
-        None => format!("{}_{}.{}", sanitize(&name), id, ext),
-    };
+    let filename = format!("{}.{}", file_stem(&settings.name_template, &name, id, &type_label, version), ext);
 
     let mut dir = std::path::PathBuf::from(&settings.save_dir);
     if settings.sort_by_type {

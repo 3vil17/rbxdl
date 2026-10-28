@@ -81,6 +81,16 @@ pub struct Settings {
     pub accepted_terms: bool,
     #[serde(default)]
     pub seen_version: String,
+    #[serde(default = "default_template")]
+    pub name_template: String,
+    #[serde(default = "yes")]
+    pub images_png: bool,
+}
+
+pub const DEFAULT_TEMPLATE: &str = "{name}_{id}";
+
+fn default_template() -> String {
+    DEFAULT_TEMPLATE.into()
 }
 
 fn yes() -> bool {
@@ -95,6 +105,8 @@ impl Default for Settings {
             mesh_obj: true,
             accepted_terms: false,
             seen_version: String::new(),
+            name_template: default_template(),
+            images_png: true,
         }
     }
 }

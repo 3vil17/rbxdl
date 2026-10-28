@@ -156,6 +156,7 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/bulk/preview", post(bulk_preview))
         .route("/api/bulk/clear", post(bulk_clear))
         .route("/api/bulk/retry", post(bulk_retry))
+        .route("/api/expand", post(expand))
         .route("/api/bulk/zip", post(bulk_zip))
         .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/api/update", get(update_check))
@@ -335,6 +336,8 @@ async fn get_settings() -> Json<Value> {
         "save_dir": s.save_dir,
         "sort_by_type": s.sort_by_type,
         "mesh_obj": s.mesh_obj,
+        "name_template": s.name_template,
+        "images_png": s.images_png,
         "accepted_terms": s.accepted_terms,
         "version": env!("CARGO_PKG_VERSION"),
         "has_key": store::get_secret("api_key").is_some(),
@@ -347,6 +350,8 @@ struct SettingsBody {
     save_dir: Option<String>,
     sort_by_type: Option<bool>,
     mesh_obj: Option<bool>,
+    name_template: Option<String>,
+    images_png: Option<bool>,
 }
 
 async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
@@ -364,8 +369,24 @@ async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
     if let Some(obj) = body.mesh_obj {
         s.mesh_obj = obj;
     }
+    if let Some(t) = body.name_template {
+        let t = t.trim();
+        if !t.is_empty() && !t.contains("{id}") && !t.contains("{name}") {
+            return fail("the name needs {id} or {name} in it, or every file would get the same name");
+        }
+        s.name_template = if t.is_empty() { store::DEFAULT_TEMPLATE.into() } else { t.to_string() };
+    }
+    if let Some(png) = body.images_png {
+        s.images_png = png;
+    }
     match store::save_settings(&s) {
-        Ok(_) => ok(json!({ "save_dir": s.save_dir, "sort_by_type": s.sort_by_type, "mesh_obj": s.mesh_obj })),
+        Ok(_) => ok(json!({
+            "save_dir": s.save_dir,
+            "sort_by_type": s.sort_by_type,
+            "mesh_obj": s.mesh_obj,
+            "name_template": s.name_template,
+            "images_png": s.images_png,
+        })),
         Err(e) => fail(e.to_string()),
     }
 }
@@ -652,14 +673,27 @@ async fn bulk_start(State(st): State<AppState>, Json(body): Json<BulkBody>) -> J
     ok(json!({ "total": total, "workers": workers }))
 }
 
-async fn bulk_retry(State(st): State<AppState>) -> Json<Value> {
+#[derive(Deserialize, Default)]
+struct RetryBody {
+    #[serde(default)]
+    ids: Option<Vec<String>>,
+}
+
+async fn bulk_retry(State(st): State<AppState>, Json(body): Json<RetryBody>) -> Json<Value> {
+    let only: Option<Vec<i64>> = body.ids.map(|v| v.iter().filter_map(|x| x.parse().ok()).collect());
     let todo: Vec<usize> = {
         let mut b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
         if b.running {
             return fail("a bulk download is already running");
         }
-        let todo: Vec<usize> =
-            b.items.iter().enumerate().filter(|(_, it)| it.state == "error" || it.state == "skipped").map(|(i, _)| i).collect();
+        let todo: Vec<usize> = b
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| it.state == "error" || it.state == "skipped")
+            .filter(|(_, it)| only.as_ref().is_none_or(|o| o.contains(&it.id)))
+            .map(|(i, _)| i)
+            .collect();
         for &i in &todo {
             b.items[i] = BulkItem { id: b.items[i].id, state: "queued", ..Default::default() };
         }
@@ -675,6 +709,37 @@ async fn bulk_retry(State(st): State<AppState>) -> Json<Value> {
     let total = todo.len();
     let workers = spawn_bulk(&st, todo);
     ok(json!({ "total": total, "workers": workers }))
+}
+
+#[derive(Deserialize)]
+struct ExpandItem {
+    kind: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct ExpandBody {
+    items: Vec<ExpandItem>,
+}
+
+async fn expand(State(st): State<AppState>, Json(body): Json<ExpandBody>) -> Json<Value> {
+    let mut out = Vec::new();
+    for it in body.items.iter().take(50) {
+        let Ok(id) = it.id.parse::<i64>() else { continue };
+        let found = match it.kind.as_str() {
+            "bundle" => st.rb.bundle_assets(id).await,
+            "outfit" => st.rb.outfit_assets(id).await,
+            _ => None,
+        };
+        out.push(match found {
+            Some((name, ids)) => json!({
+                "kind": it.kind, "id": it.id, "name": name,
+                "ids": ids.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+            }),
+            None => json!({ "kind": it.kind, "id": it.id, "ids": [] }),
+        });
+    }
+    ok(json!(out))
 }
 
 fn spawn_bulk(st: &AppState, todo: Vec<usize>) -> usize {

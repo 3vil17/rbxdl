@@ -173,6 +173,13 @@
   #changes-body .h { color: rgb(212,212,212); font-weight: 500; }
   #changes-body ul { margin: 6px 0 0; }
   @media (max-width: 600px) { .ckrow .tok { display: none; } }
+  .fgroups { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .fgroups:empty { display: none; }
+  .fgroup { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; border-radius: 6px; font-size: 0.75rem;
+    background: rgba(236,59,71,0.07); color: rgb(208,96,112); }
+  .fgroup b { font-weight: 600; }
+  .fgroup .why { flex: 1; min-width: 0; color: rgb(136,136,136); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fgroup .btn { padding: 3px 10px; font-size: 12px; }
   .bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; margin-top: 14px; }
   .bar div { height: 100%; width: 0; background: var(--green); transition: width 0.3s; }
   .counts { display: flex; gap: 14px; font-size: 0.75rem; color: rgb(136,136,136); margin-top: 8px; flex-wrap: wrap; }
@@ -345,6 +352,8 @@
           <li><strong>Download</strong> walks the authorization ladder: Open Cloud key, then each saved account directly, then the creator's own places as a place-id context.</li>
           <li><strong>Bulk</strong> takes up to 1000 ids at once, or import a place / model file to pull every asset id out of it.</li>
           <li>Leave <strong>Version</strong> empty for the latest, or enter a number to grab an older version.</li>
+          <li>Bundle and outfit links open up into all their parts in <strong>Bulk</strong>.</li>
+          <li>Press <strong>Ctrl+V</strong> anywhere on this tab to paste and fetch. In Bulk, <strong>Ctrl+Enter</strong> starts the download.</li>
           <li>Files save to your download folder (set in <strong>Settings</strong>); every download is kept in <strong>History</strong>.</li>
           <li>Decals and images that resolve to an XML descriptor are followed once to the real image.</li>
         </ul>
@@ -358,6 +367,7 @@
         <textarea id="bulk-input" spellcheck="false" placeholder="ids or links, separated by spaces, commas or new lines (max 1000)"></textarea>
         <div class="counts">
           <span><b id="bulk-count">0</b> / 1000 ids</span>
+          <span id="dupes"></span>
           <span id="preview-state"></span>
           <label class="check"><input type="checkbox" id="skip-existing" checked /> Skip ones I already have</label>
         </div>
@@ -379,6 +389,7 @@
         </div>
         <div class="bar"><div id="bulk-bar"></div></div>
         <div class="counts" id="bulk-counts"></div>
+        <div class="fgroups" id="fail-groups"></div>
         <div class="note" id="bulk-note"></div>
         <div class="rows" id="bulk-rows"></div>
       </div>
@@ -436,7 +447,17 @@
           </div>
         </div>
         <label class="check" style="margin-top:12px"><input type="checkbox" id="sort-type" /> Sort into folders by type (Audio, Image, Mesh...)</label><br>
-        <label class="check" style="margin-top:8px"><input type="checkbox" id="mesh-obj" /> Also save meshes as .obj (opens in Blender)</label>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="mesh-obj" /> Also save meshes as .obj (opens in Blender)</label><br>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="images-png" /> Save images as .png (converts jpg and webp)</label>
+        <div class="sep"></div>
+        <div class="fgrid">
+          <label>File names</label>
+          <div class="frow">
+            <input id="name-tpl" type="text" placeholder="{name}_{id}" autocomplete="off" spellcheck="false" />
+            <button class="btn" id="name-tpl-btn" data-i="save">Save</button>
+          </div>
+        </div>
+        <p class="hint">Use <code>{name}</code> <code>{id}</code> <code>{type}</code> <code>{version}</code>. Example: <span id="name-preview" style="color:rgb(212,212,212)"></span></p>
         <div class="note" id="settings-note"></div>
       </div>
     </section>
@@ -556,6 +577,25 @@ function friendly(msg) {
   if (m.includes("network error")) return "Couldn't reach Roblox. Check your internet connection.";
   return "Couldn't download this asset.";
 }
+function failReason(msg) {
+  const m = String(msg || "").toLowerCase();
+  if (m.includes("moderated")) return "Moderated";
+  if (m.includes("rate limited")) return "Rate limited";
+  if (m.includes("every saved cookie is expired") || m.includes("no credentials saved") || m.includes("401")) return "Cookie problem";
+  if (m.includes("404")) return "Not found";
+  if (m.includes("this is a model") || m.includes("not authorized") || m.includes("403") || m.includes("409")) return "No access";
+  if (m.includes("network error")) return "Network";
+  return "Other";
+}
+const FAIL_HINT = {
+  "Moderated": "removed by Roblox, can't be downloaded",
+  "Rate limited": "wait a minute or add more cookies, then retry",
+  "Cookie problem": "fix your cookies in Settings, then retry",
+  "Not found": "these ids don't exist or were deleted",
+  "No access": "private, none of your accounts or the creator's games can reach them",
+  "Network": "couldn't reach Roblox",
+  "Other": "open a row's Details to see why",
+};
 function errHtml(msg) {
   const lines = String(msg || "").split(" | ").map((l) => '<span class="line">' + esc(l) + "</span>").join("");
   return esc(friendly(msg)) + '<details class="nerd"><summary>Details</summary><div class="raw">' + lines + "</div></details>";
@@ -609,6 +649,14 @@ let current = null;
 async function doFetch() {
   const raw = $("#asset-input").value.trim();
   if (!raw) return;
+  if (/\b(bundles?|outfits?)\/\d+/i.test(raw)) {
+    const box = $("#bulk-input");
+    box.value = (box.value.trim() ? box.value.trim() + String.fromCharCode(10) : "") + raw;
+    $("#asset-input").value = "";
+    document.querySelector('nav button[data-tab="bulk"]').click();
+    box.dispatchEvent(new Event("input"));
+    return;
+  }
   const btn = $("#fetch-btn"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetch';
   hideNote($("#dl-note")); $("#result").style.display = "none";
   const res = await api("/api/lookup?id=" + encodeURIComponent(raw));
@@ -663,6 +711,9 @@ async function loadSettings() {
   $("#save-dir").value = res.data.save_dir;
   $("#sort-type").checked = !!res.data.sort_by_type;
   $("#mesh-obj").checked = !!res.data.mesh_obj;
+  $("#images-png").checked = !!res.data.images_png;
+  $("#name-tpl").value = res.data.name_template || "";
+  namePreview();
   $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
   loadCookies();
 }
@@ -766,8 +817,32 @@ document.querySelectorAll("#access-seg button").forEach((b) => {
   b.onclick = () => { accessPick = b.dataset.a; renderChips(); };
 });
 const thumbs = {};
+const REF_RE = /\S*\b(bundles?|outfits?)\/(\d+)\S*/gi;
+async function expandRefs() {
+  const box = $("#bulk-input");
+  const items = [...box.value.matchAll(REF_RE)].map((m) => ({ kind: m[1].toLowerCase().startsWith("bundle") ? "bundle" : "outfit", id: m[2] }));
+  if (!items.length) return;
+  $("#preview-state").innerHTML = '<span class="spinner"></span> opening bundles';
+  const res = await post("/api/expand", { items });
+  $("#preview-state").textContent = "";
+  const found = {};
+  (res.ok ? res.data : []).forEach((r) => { found[r.kind + r.id] = r; });
+  const msgs = [];
+  box.value = box.value.replace(REF_RE, (m, k, id) => {
+    const r = found[(k.toLowerCase().startsWith("bundle") ? "bundle" : "outfit") + id];
+    if (!r || !r.ids.length) { msgs.push("Couldn't open " + (r ? r.kind : "link") + " " + esc(id) + "."); return ""; }
+    msgs.push("<b>" + esc(r.name) + "</b> (" + r.kind + ") became " + r.ids.length + " assets.");
+    return r.ids.join(String.fromCharCode(10));
+  });
+  showNote($("#bulk-note"), msgs.some((x) => x.startsWith("Couldn't")) ? "err" : "ok", msgs.join("<br>"));
+  box.dispatchEvent(new Event("input"));
+}
 $("#bulk-input").addEventListener("input", () => {
-  const n = new Set(splitIds($("#bulk-input").value)).size;
+  const all = splitIds($("#bulk-input").value);
+  const n = new Set(all).size;
+  $("#dupes").textContent = all.length > n ? (all.length - n) + " duplicate" + (all.length - n > 1 ? "s" : "") + " removed" : "";
+  REF_RE.lastIndex = 0;
+  if (REF_RE.test($("#bulk-input").value)) { REF_RE.lastIndex = 0; clearTimeout(previewTimer); previewTimer = setTimeout(expandRefs, 300); return; }
   $("#bulk-count").textContent = n; $("#bulk-count").style.color = n > 1000 ? "var(--red)" : "";
   preview = null; $("#type-chips").innerHTML = ""; $("#preview-state").textContent = ""; $("#access-seg").style.display = "none";
   clearTimeout(previewTimer);
@@ -821,6 +896,13 @@ function renderBulk(d) {
     '</div><span class="st ' + x.state + '">' + x.state + "</span>" +
     (x.path ? '<button class="btn" data-p="' + i + '">' + svg("folder") + "</button>" : "") + "</div>").join("");
   $("#bulk-rows").querySelectorAll("button[data-p]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: it[b.dataset.p].path }); });
+  const groups = {};
+  if (!d.running) it.filter((x) => x.state === "error").forEach((x) => { (groups[failReason(x.error)] = groups[failReason(x.error)] || []).push(x.id); });
+  const order = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
+  $("#fail-groups").innerHTML = order.map((r) =>
+    '<div class="fgroup"><b>' + groups[r].length + " " + esc(r) + '</b><span class="why">' + esc(FAIL_HINT[r]) + "</span>" +
+    (r === "Moderated" || r === "Not found" ? "" : '<button class="btn" data-g="' + esc(r) + '">' + svg("refresh") + " Retry</button>") + "</div>").join("");
+  $("#fail-groups").querySelectorAll("button[data-g]").forEach((b) => { b.onclick = () => retryBulk(groups[b.dataset.g].map(String)); });
   $("#bulk-start").disabled = d.running; $("#bulk-cancel").disabled = !d.running;
   $("#bulk-after").style.display = !d.running && it.length ? "flex" : "none";
   $("#bulk-retry").disabled = !(c.error + c.skipped);
@@ -864,8 +946,9 @@ $("#bulk-start").onclick = async () => {
   showNote($("#bulk-note"), "info", "Started " + res.data.total + " assets with " + res.data.workers + " workers.");
   startPolling();
 };
-$("#bulk-retry").onclick = async () => {
-  const res = await post("/api/bulk/retry", {});
+$("#bulk-retry").onclick = () => retryBulk(null);
+async function retryBulk(ids) {
+  const res = await post("/api/bulk/retry", ids ? { ids } : {});
   if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
   showNote($("#bulk-note"), "info", "Retrying " + res.data.total + " assets.");
   startPolling();
@@ -903,6 +986,24 @@ async function importFile(f) {
 }
 $("#bulk-cancel").onclick = () => post("/api/bulk/cancel", {});
 pollBulk().then(() => { if ($("#bulk-cancel").disabled === false) startPolling(); });
+$("#images-png").onchange = async () => {
+  const res = await post("/api/settings", { images_png: $("#images-png").checked });
+  if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
+  showNote($("#settings-note"), "ok", res.data.images_png ? "Images get saved as .png." : "Images keep the format Roblox sends.");
+};
+function namePreview() {
+  const t = $("#name-tpl").value.trim() || "{name}_{id}";
+  const out = t.replace(/\{name\}/g, "lagtrain_emote").replace(/\{id\}/g, "75885924747466").replace(/\{type\}/g, "Audio").replace(/\{version\}/g, "");
+  $("#name-preview").textContent = out.replace(/[<>:"/\\|?*]/g, "_") + ".ogg";
+}
+$("#name-tpl").addEventListener("input", namePreview);
+$("#name-tpl").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#name-tpl-btn").click(); });
+$("#name-tpl-btn").onclick = async () => {
+  const res = await post("/api/settings", { name_template: $("#name-tpl").value });
+  if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
+  $("#name-tpl").value = res.data.name_template; namePreview();
+  showNote($("#settings-note"), "ok", "New downloads will be named like that.");
+};
 $("#mesh-obj").onchange = async () => {
   const res = await post("/api/settings", { mesh_obj: $("#mesh-obj").checked });
   if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
@@ -1008,6 +1109,19 @@ async function showChanges(all) {
 }
 $("#changes-ok").onclick = () => { $("#changes").style.display = "none"; post("/api/changelog/seen", {}); };
 $("#changes-link").onclick = (e) => { e.preventDefault(); showChanges(true); };
+document.addEventListener("paste", (e) => {
+  if ($("#tab-download").style.display === "none" || e.target.closest("input, textarea")) return;
+  const text = (e.clipboardData && e.clipboardData.getData("text") || "").trim();
+  if (!/\d/.test(text)) return;
+  e.preventDefault();
+  $("#asset-input").value = text;
+  doFetch();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || $("#tab-bulk").style.display === "none") return;
+  e.preventDefault();
+  if (!$("#bulk-start").disabled) $("#bulk-start").click();
+});
 const ping = () => post("/api/ping", {}).catch(() => {});
 ping(); setInterval(ping, 20000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
