@@ -418,7 +418,7 @@
       </div>
     </section>
 
-    <p class="foot">rbx<b>yoinker</b> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT</p>
+    <p class="foot">rbx<b>yoinker</b> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT · <a href="#" id="quit-link">Quit</a></p>
   </div>
 
 <div class="modal-bg" id="forced" style="display:none; z-index:20">
@@ -431,7 +431,7 @@
     <p id="forced-notes" style="font-size:0.78rem; color:rgb(136,136,136); margin:10px 0 0; white-space:pre-wrap; max-height:220px; overflow-y:auto"></p>
     <div class="fbtns">
       <button class="btn" id="forced-btn">Update now</button>
-      <a class="btn" id="forced-link" target="_blank" style="text-decoration:none">Open on GitHub</a>
+      <a class="btn" id="forced-link" target="_blank" style="text-decoration:none; color:rgb(212,212,212); font-weight:500">Open on GitHub</a>
     </div>
     <div class="note" id="forced-note"></div>
   </div>
@@ -878,6 +878,12 @@ $("#asset-input").focus();
 checkHealth();
 loadRecent();
 api("/api/settings").then((res) => { if (res.ok && !res.data.accepted_terms) $("#terms").style.display = "flex"; });
+$("#quit-link").onclick = async (e) => {
+  e.preventDefault();
+  if (!confirm("Close rbxyoinker? Running downloads will stop.")) return;
+  await post("/api/quit", {}).catch(() => {});
+  document.body.innerHTML = '<div class="stack"><div class="card" style="text-align:center; font-size:0.85rem; color:rgb(170,170,170)">rbx<b style="color:var(--green); font-weight:600">yoinker</b> is closed. You can close this tab.</div></div>';
+};
 $("#terms-ok").onclick = async () => { await post("/api/accept", {}); $("#terms").style.display = "none"; };
 const lastTab = store("tab");
 if (lastTab && lastTab !== "download") { const b = document.querySelector('nav button[data-tab="' + lastTab + '"]'); if (b) b.click(); }

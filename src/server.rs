@@ -29,6 +29,14 @@ async fn same_site_only(req: axum::extract::Request, next: axum::middleware::Nex
     next.run(req).await
 }
 
+async fn quit_app() -> Json<Value> {
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        std::process::exit(0);
+    });
+    ok(Value::Null)
+}
+
 async fn accept_terms() -> Json<Value> {
     let mut s = store::load_settings();
     s.accepted_terms = true;
@@ -112,6 +120,7 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/api/update", get(update_check))
         .route("/api/accept", post(accept_terms))
+        .route("/api/quit", post(quit_app))
         .route("/api/update/install", post(install_update))
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
