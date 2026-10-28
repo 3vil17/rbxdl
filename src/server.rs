@@ -73,8 +73,18 @@ async fn already_running() -> Option<String> {
     resp.status().is_success().then_some(url)
 }
 
-pub async fn run() -> std::io::Result<()> {
-    if let Some(url) = already_running().await {
+pub async fn run(updated: bool) -> std::io::Result<()> {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(exe.with_extension("old.exe"));
+    }
+    if updated {
+        for _ in 0..50 {
+            if std::net::TcpListener::bind(("127.0.0.1", PORT)).is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    } else if let Some(url) = already_running().await {
         println!("rbxyoinker is already running at {url}");
         let _ = open::that(&url);
         return Ok(());
@@ -102,6 +112,7 @@ pub async fn run() -> std::io::Result<()> {
         .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/api/update", get(update_check))
         .route("/api/accept", post(accept_terms))
+        .route("/api/update/install", post(install_update))
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
         .route("/api/reveal", post(reveal))
@@ -115,12 +126,14 @@ pub async fn run() -> std::io::Result<()> {
     };
     let addr = listener.local_addr()?;
     let url = format!("http://{addr}");
-    println!("rbxyoinker running at {url}");
+    println!("rbxyoinker {} running at {url}", env!("CARGO_PKG_VERSION"));
     let _ = std::fs::write(
         store::config_dir().join("instance.json"),
         json!({ "url": url, "pid": std::process::id() }).to_string(),
     );
-    let _ = open::that(&url);
+    if !updated {
+        let _ = open::that(&url);
+    }
 
     axum::serve(listener, app).await
 }
@@ -345,14 +358,88 @@ fn version_tuple(v: &str) -> Vec<u32> {
     v.trim_start_matches('v').split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
 
+fn is_important(notes: &str) -> bool {
+    let n = notes.to_ascii_lowercase();
+    n.contains("<!-- important -->") || n.contains("[important]")
+}
+
+fn clean_notes(notes: &str) -> String {
+    notes.replace("<!-- important -->", "").replace("[important]", "").replace("[Important]", "").trim().to_string()
+}
+
 async fn update_check(State(st): State<AppState>) -> Json<Value> {
     let current = env!("CARGO_PKG_VERSION");
-    match st.rb.latest_release().await {
-        Some((tag, url)) if version_tuple(&tag) > version_tuple(current) => {
-            ok(json!({ "available": true, "latest": tag, "url": url, "current": current }))
-        }
-        _ => ok(json!({ "available": false, "current": current })),
+    let Some(releases) = st.rb.releases().await else {
+        return ok(json!({ "available": false, "current": current }));
+    };
+    let newer: Vec<_> = releases.iter().filter(|r| version_tuple(&r.tag) > version_tuple(current)).collect();
+    let Some(latest) = newer.iter().max_by_key(|r| version_tuple(&r.tag)) else {
+        return ok(json!({ "available": false, "current": current }));
+    };
+    ok(json!({
+        "available": true,
+        "important": newer.iter().any(|r| is_important(&r.notes)),
+        "latest": latest.tag,
+        "url": latest.url,
+        "notes": clean_notes(&latest.notes),
+        "can_install": latest.exe_url.is_some(),
+        "current": current,
+    }))
+}
+
+// A running exe can't be overwritten on Windows, but it can be renamed. So the
+// new exe goes in under the real name, the old one moves aside, and the new
+// one is started to take over the port once this process exits.
+async fn install_update(State(st): State<AppState>) -> Json<Value> {
+    let current = env!("CARGO_PKG_VERSION");
+    let Some(releases) = st.rb.releases().await else {
+        return fail("couldn't reach GitHub");
+    };
+    let Some(latest) = releases
+        .iter()
+        .filter(|r| version_tuple(&r.tag) > version_tuple(current))
+        .max_by_key(|r| version_tuple(&r.tag))
+    else {
+        return fail("already on the latest version");
+    };
+    let Some(url) = &latest.exe_url else {
+        return fail("that release has no exe attached, download it from GitHub");
+    };
+    let bytes = match st.rb.download_file(url).await {
+        Ok(b) => b,
+        Err(e) => return fail(e.to_string()),
+    };
+    if !bytes.starts_with(b"MZ") || bytes.len() < 100_000 {
+        return fail("the downloaded file doesn't look like a valid exe");
     }
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return fail(e.to_string()),
+    };
+    let fresh = exe.with_extension("new.exe");
+    let old = exe.with_extension("old.exe");
+    let swap = || -> std::io::Result<()> {
+        std::fs::write(&fresh, &bytes)?;
+        let _ = std::fs::remove_file(&old);
+        std::fs::rename(&exe, &old)?;
+        if let Err(e) = std::fs::rename(&fresh, &exe) {
+            let _ = std::fs::rename(&old, &exe);
+            return Err(e);
+        }
+        Ok(())
+    };
+    if let Err(e) = swap() {
+        let _ = std::fs::remove_file(&fresh);
+        return fail(format!("couldn't replace the exe ({e}). Download it from GitHub instead"));
+    }
+    if let Err(e) = std::process::Command::new(&exe).arg("--updated").spawn() {
+        return fail(format!("updated, but couldn't restart ({e}). Start rbxyoinker again"));
+    }
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        std::process::exit(0);
+    });
+    ok(json!({ "version": latest.tag }))
 }
 
 async fn scan_file(body: Bytes) -> Json<Value> {

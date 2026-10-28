@@ -421,6 +421,22 @@
     <p class="foot">rbx<b>yoinker</b> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT</p>
   </div>
 
+<div class="modal-bg" id="forced" style="display:none; z-index:20">
+  <div class="card modal">
+    <div class="titlebar">
+      <img class="logo" src="/logo.png" alt="" />
+      <p class="title" style="margin:0; font-size:0.95rem; font-weight:600; color:#fff">Important update required</p>
+    </div>
+    <p style="font-size:0.82rem; color:rgb(170,170,170); margin:14px 0 0">Update to <b style="color:#fff" id="forced-ver"></b> to keep using rbxyoinker.</p>
+    <p id="forced-notes" style="font-size:0.78rem; color:rgb(136,136,136); margin:10px 0 0; white-space:pre-wrap; max-height:220px; overflow-y:auto"></p>
+    <div class="fbtns">
+      <button class="btn" id="forced-btn">Update now</button>
+      <a class="btn" id="forced-link" target="_blank" style="text-decoration:none">Open on GitHub</a>
+    </div>
+    <div class="note" id="forced-note"></div>
+  </div>
+</div>
+
 <div class="modal-bg" id="terms" style="display:none">
   <div class="card modal">
     <div class="titlebar">
@@ -799,10 +815,35 @@ $("#sort-type").onchange = async () => {
   if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
   showNote($("#settings-note"), "ok", res.data.sort_by_type ? "New downloads go into a folder per type." : "New downloads go straight into the folder.");
 };
+async function installUpdate(btn, noteEl) {
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Updating…';
+  const res = await post("/api/update/install", {}).catch(() => ({ ok: false, error: "lost connection" }));
+  if (!res.ok) { btn.disabled = false; setBtn(btn, "download", "Update now"); noteEl.className = "note show err"; noteEl.textContent = res.error; return; }
+  btn.innerHTML = '<span class="spinner"></span> Restarting…';
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try { const u = await api("/api/update"); if (u.ok && u.data.current !== updateInfo.current) { location.reload(); return; } } catch (e) {}
+  }
+  btn.innerHTML = "Restart rbxyoinker to finish";
+}
+let updateInfo = null;
 api("/api/update").then((res) => {
   if (!res.ok || !res.data.available) return;
+  updateInfo = res.data;
+  if (res.data.important) {
+    $("#forced-ver").textContent = res.data.latest + " (you have v" + res.data.current + ")";
+    $("#forced-notes").textContent = res.data.notes || "This update fixes something important, so older versions can't keep running.";
+    $("#forced-link").href = res.data.url;
+    $("#forced").style.display = "flex";
+    const fb = $("#forced-btn");
+    if (!res.data.can_install) { fb.style.display = "none"; }
+    fb.onclick = () => installUpdate(fb, $("#forced-note"));
+    return;
+  }
   const el = $("#update-line"); el.style.display = "";
-  el.innerHTML = svg("download").replace("<svg", '<svg class="ic"') + 'Update available: <a href="' + esc(res.data.url) + '" target="_blank">' + esc(res.data.latest) + "</a> (you have v" + esc(res.data.current) + ")";
+  el.innerHTML = svg("download").replace("<svg", '<svg class="ic"') + 'Update available: <a href="' + esc(res.data.url) + '" target="_blank">' + esc(res.data.latest) + "</a> (you have v" + esc(res.data.current) + ")" +
+    (res.data.can_install ? ' <button class="btn" id="update-btn" style="padding:3px 10px; font-size:12px; margin-left:6px">Update now</button>' : "");
+  const ub = $("#update-btn"); if (ub) ub.onclick = () => installUpdate(ub, $("#dl-note"));
 });
 $("#save-dir-btn").onclick = async () => {
   const res = await post("/api/settings", { save_dir: $("#save-dir").value });

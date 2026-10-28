@@ -17,7 +17,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    if let Err(e) = rt.block_on(server::run()) {
+    if let Err(e) = rt.block_on(server::run(std::env::args().any(|a| a == "--updated"))) {
         eprintln!("rbxyoinker exited with an error: {e}");
         std::process::exit(1);
     }

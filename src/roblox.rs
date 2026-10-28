@@ -50,6 +50,13 @@ pub struct CookieInfo {
     pub robux: Option<i64>,
 }
 
+pub struct Release {
+    pub tag: String,
+    pub url: String,
+    pub notes: String,
+    pub exe_url: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct GroupRef {
     pub id: i64,
@@ -252,10 +259,10 @@ impl Roblox {
         out
     }
 
-    pub async fn latest_release(&self) -> Option<(String, String)> {
+    pub async fn releases(&self) -> Option<Vec<Release>> {
         let v: Value = self
             .http
-            .get("https://api.github.com/repos/3vil17/rbxyoinker/releases/latest")
+            .get("https://api.github.com/repos/3vil17/rbxyoinker/releases?per_page=30")
             .header("User-Agent", "rbxyoinker")
             .send()
             .await
@@ -263,7 +270,35 @@ impl Roblox {
             .json()
             .await
             .ok()?;
-        Some((v["tag_name"].as_str()?.to_string(), v["html_url"].as_str()?.to_string()))
+        let list = v
+            .as_array()?
+            .iter()
+            .filter(|r| r["draft"].as_bool() != Some(true) && r["prerelease"].as_bool() != Some(true))
+            .filter_map(|r| {
+                let exe_url = r["assets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|a| a["name"].as_str().is_some_and(|n| n.to_ascii_lowercase().ends_with(".exe")))
+                    .and_then(|a| a["browser_download_url"].as_str())
+                    .map(String::from);
+                Some(Release {
+                    tag: r["tag_name"].as_str()?.to_string(),
+                    url: r["html_url"].as_str().unwrap_or_default().to_string(),
+                    notes: r["body"].as_str().unwrap_or_default().to_string(),
+                    exe_url,
+                })
+            })
+            .collect();
+        Some(list)
+    }
+
+    pub async fn download_file(&self, url: &str) -> Result<Vec<u8>> {
+        let resp = self.http.get(url).header("User-Agent", "rbxyoinker").send().await?;
+        if !resp.status().is_success() {
+            return Err(Error::Other(format!("download failed with {}", resp.status())));
+        }
+        Ok(resp.bytes().await?.to_vec())
     }
 
     pub async fn cookie_info(&self, cookie: &str) -> CookieInfo {
