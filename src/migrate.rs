@@ -5,11 +5,13 @@ use crate::pool::Pool;
 use crate::roblox::{Creator, Roblox};
 use crate::store;
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Moves a place's assets to a creator the account manages. Only assets made
-/// by that account or one of the groups it manages are touched.
+/// Moves a place's assets to a creator the account manages. Any asset the
+/// downloader can reach is moved, whoever made it.
 #[derive(Serialize, Clone, Default)]
 pub struct Item {
     pub id: i64,
@@ -27,6 +29,7 @@ pub struct Item {
 #[derive(Serialize, Default)]
 pub struct Job {
     pub place: String,
+    pub place_id: i64,
     pub checked: bool,
     pub running: bool,
     pub cancel: bool,
@@ -116,24 +119,31 @@ fn still_processing(decal: i64) -> Error {
     Error::Other(format!("uploaded as decal {decal}, Roblox is still processing it. Retry in a minute"))
 }
 
-/// Uploads one asset, or for an image whose decal already went up, only
-/// looks for the image again. The decal id is written to the item as soon
-/// as it exists so a retry never uploads the same image twice.
-async fn move_one(rb: &Roblox, pool: &Pool, cookie: &str, to: &Creator, job: &Shared, i: usize) -> Result<i64> {
-    let item = lock(job).items[i].clone();
-    if let Some(decal) = item.decal_id {
-        return image_inside(rb, cookie, decal).await.ok_or_else(|| still_processing(decal));
-    }
+/// Gets the file to upload, the same way Bulk downloads it. Images that come
+/// back as a decal descriptor are followed to the image inside.
+async fn fetch(rb: &Roblox, pool: &Pool, place: Option<i64>, kind: &str, id: i64) -> Result<Vec<u8>> {
     let api_key = store::get_secret("api_key");
-    let mut bytes = download::resolve_bytes(rb, api_key.as_deref(), pool, item.id).await?;
-    if item.kind == "Image" {
-        if let Some(inner) = convert::inner_asset_id(&bytes).filter(|i| *i != item.id) {
-            bytes = download::resolve_bytes(rb, api_key.as_deref(), pool, inner).await?;
+    let mut bytes = download::resolve_bytes(rb, api_key.as_deref(), pool, id, place).await?;
+    if kind == "Image" {
+        if let Some(inner) = convert::inner_asset_id(&bytes).filter(|i| *i != id) {
+            bytes = download::resolve_bytes(rb, api_key.as_deref(), pool, inner, place).await?;
         }
         if convert::extension_for(&bytes, 1) == "webp" {
             bytes = convert::to_png(&bytes).ok_or_else(|| Error::Other("couldn't convert the webp image".into()))?;
         }
     }
+    Ok(bytes)
+}
+
+/// Uploads one downloaded asset, or for an image whose decal already went
+/// up, only looks for the image again. The decal id is written to the item
+/// as soon as it exists so a retry never uploads the same image twice.
+async fn upload_one(rb: &Roblox, cookie: &str, to: &Creator, job: &Shared, i: usize, bytes: Option<Vec<u8>>) -> Result<i64> {
+    let item = lock(job).items[i].clone();
+    if let Some(decal) = item.decal_id {
+        return image_inside(rb, cookie, decal).await.ok_or_else(|| still_processing(decal));
+    }
+    let bytes = bytes.ok_or_else(|| Error::Other("nothing was downloaded".into()))?;
     let (asset_type, file_name, mime) = upload_kind(&item.kind, &bytes)
         .ok_or_else(|| Error::Other(format!("Roblox doesn't take this file as {}", item.kind.to_lowercase())))?;
     let name: String = if item.name.trim().is_empty() { format!("asset {}", item.id) } else { item.name.chars().take(50).collect() };
@@ -154,32 +164,74 @@ async fn move_one(rb: &Roblox, pool: &Pool, cookie: &str, to: &Creator, job: &Sh
     image_inside(rb, cookie, new_id).await.ok_or_else(|| still_processing(new_id))
 }
 
+fn set_result(job: &Shared, i: usize, res: Result<i64>) {
+    let mut j = lock(job);
+    let it = &mut j.items[i];
+    match res {
+        Ok(new_id) => {
+            it.state = "ok".into();
+            it.new_id = Some(new_id);
+            it.error = None;
+        }
+        Err(e) => {
+            it.state = "error".into();
+            it.error = Some(e.to_string());
+        }
+    }
+}
+
+/// Downloads everything first across all signed in accounts like Bulk does,
+/// then uploads one at a time with the account that owns the target.
 pub async fn run(rb: Roblox, pool: Pool, job: Shared, cookie: String, to: Creator, todo: Vec<usize>) {
+    let place = Some(lock(&job).place_id).filter(|p| *p > 0);
+    let files: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::default();
+    let queue = Arc::new(todo.clone());
+    let next = Arc::new(AtomicUsize::new(0));
+    let workers = (pool.alive_count() * 2).clamp(2, 8);
+    let mut handles = Vec::new();
+    for _ in 0..workers {
+        let (rb, pool, job, files, queue, next) = (rb.clone(), pool.clone(), job.clone(), files.clone(), queue.clone(), next.clone());
+        handles.push(tokio::spawn(async move {
+            while let Some(&i) = queue.get(next.fetch_add(1, Ordering::SeqCst)) {
+                let item = {
+                    let mut j = lock(&job);
+                    if j.cancel {
+                        break;
+                    }
+                    if j.items[i].decal_id.is_some() {
+                        continue;
+                    }
+                    j.items[i].state = "downloading".into();
+                    j.items[i].clone()
+                };
+                match fetch(&rb, &pool, place, &item.kind, item.id).await {
+                    Ok(bytes) => {
+                        files.lock().unwrap_or_else(|e| e.into_inner()).insert(i, bytes);
+                        lock(&job).items[i].state = "downloaded".into();
+                    }
+                    Err(e) => set_result(&job, i, Err(e)),
+                }
+            }
+        }));
+    }
+    for h in handles {
+        let _ = h.await;
+    }
     for i in todo {
-        {
+        let bytes = {
             let mut j = lock(&job);
+            if j.items[i].state == "error" {
+                continue;
+            }
             if j.cancel {
                 j.items[i].state = "found".into();
                 continue;
             }
-            j.items[i].state = "working".into();
-        }
-        let res = move_one(&rb, &pool, &cookie, &to, &job, i).await;
-        {
-            let mut j = lock(&job);
-            let it = &mut j.items[i];
-            match res {
-                Ok(new_id) => {
-                    it.state = "ok".into();
-                    it.new_id = Some(new_id);
-                    it.error = None;
-                }
-                Err(e) => {
-                    it.state = "error".into();
-                    it.error = Some(e.to_string());
-                }
-            }
-        }
+            j.items[i].state = "uploading".into();
+            files.lock().unwrap_or_else(|e| e.into_inner()).remove(&i)
+        };
+        let res = upload_one(&rb, &cookie, &to, &job, i, bytes).await;
+        set_result(&job, i, res);
         tokio::time::sleep(Duration::from_millis(800)).await;
     }
     let mut j = lock(&job);

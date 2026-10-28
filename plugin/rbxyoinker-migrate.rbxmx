@@ -4,10 +4,10 @@ local ScriptEditorService = game:GetService("ScriptEditorService")
 local AssetService = game:GetService("AssetService")
 
 local serverUrl = "http://127.0.0.1:48620"
-local muted = Color3.fromRGB(136, 136, 136)
-local bright = Color3.fromRGB(224, 224, 224)
-local green = Color3.fromRGB(59, 186, 87)
-local red = Color3.fromRGB(208, 96, 112)
+local muted = Color3.fromRGB(176, 176, 176)
+local bright = Color3.fromRGB(240, 240, 240)
+local green = Color3.fromRGB(80, 220, 110)
+local red = Color3.fromRGB(240, 120, 132)
 
 local watched = {
 	Sound = { "SoundId" },
@@ -42,36 +42,41 @@ toggle.ClickableWhenViewportHidden = true
 
 local widget = plugin:CreateDockWidgetPluginGui(
 	"RbxyoinkerMigrate",
-	DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Right, false, false, 300, 260, 260, 220)
+	DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Right, false, false, 380, 440, 320, 340)
 )
 widget.Title = "rbxyoinker"
 
-local root = Instance.new("Frame")
+local root = Instance.new("ScrollingFrame")
 root.Size = UDim2.fromScale(1, 1)
 root.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
 root.BorderSizePixel = 0
+root.CanvasSize = UDim2.new()
+root.AutomaticCanvasSize = Enum.AutomaticSize.Y
+root.ScrollingDirection = Enum.ScrollingDirection.Y
+root.ScrollBarThickness = 6
+root.ScrollBarImageColor3 = Color3.fromRGB(90, 90, 90)
 root.Parent = widget
 
 local padding = Instance.new("UIPadding")
-padding.PaddingTop = UDim.new(0, 14)
-padding.PaddingBottom = UDim.new(0, 14)
-padding.PaddingLeft = UDim.new(0, 14)
-padding.PaddingRight = UDim.new(0, 14)
+padding.PaddingTop = UDim.new(0, 18)
+padding.PaddingBottom = UDim.new(0, 18)
+padding.PaddingLeft = UDim.new(0, 18)
+padding.PaddingRight = UDim.new(0, 18)
 padding.Parent = root
 
 local layout = Instance.new("UIListLayout")
-layout.Padding = UDim.new(0, 10)
+layout.Padding = UDim.new(0, 14)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = root
 
 local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
-title.Size = UDim2.new(1, 0, 0, 20)
-title.Font = Enum.Font.GothamBold
+title.Size = UDim2.new(1, 0, 0, 26)
+title.Font = Enum.Font.BuilderSansBold
 title.RichText = true
-title.Text = 'rbx<font color="#3BEA57">yoinker</font> <font color="#888888">migrate</font>'
+title.Text = 'rbx<font color="#3BEA57">yoinker</font> <font color="#AAAAAA">migrate</font>'
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 15
+title.TextSize = 22
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.LayoutOrder = 1
 title.Parent = root
@@ -80,24 +85,24 @@ local info = Instance.new("TextLabel")
 info.BackgroundTransparency = 1
 info.Size = UDim2.fromScale(1, 0)
 info.AutomaticSize = Enum.AutomaticSize.Y
-info.Font = Enum.Font.Gotham
+info.Font = Enum.Font.BuilderSans
 info.TextColor3 = muted
-info.TextSize = 12
+info.TextSize = 16
 info.TextWrapped = true
 info.TextXAlignment = Enum.TextXAlignment.Left
 info.LayoutOrder = 2
 info.Parent = root
 
 local codeBox = Instance.new("TextBox")
-codeBox.Size = UDim2.new(1, 0, 0, 34)
+codeBox.Size = UDim2.new(1, 0, 0, 64)
 codeBox.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
 codeBox.ClearTextOnFocus = false
 codeBox.Font = Enum.Font.Code
-codeBox.PlaceholderText = "6 digit code"
-codeBox.PlaceholderColor3 = Color3.fromRGB(85, 85, 85)
+codeBox.PlaceholderText = "000000"
+codeBox.PlaceholderColor3 = Color3.fromRGB(70, 70, 70)
 codeBox.Text = ""
 codeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-codeBox.TextSize = 16
+codeBox.TextSize = 34
 codeBox.LayoutOrder = 3
 codeBox.Parent = root
 local boxCorner = Instance.new("UICorner")
@@ -105,21 +110,21 @@ boxCorner.CornerRadius = UDim.new(0, 6)
 boxCorner.Parent = codeBox
 local boxStroke = Instance.new("UIStroke")
 boxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-boxStroke.Color = Color3.fromRGB(50, 52, 56)
+boxStroke.Color = Color3.fromRGB(70, 72, 76)
 boxStroke.Parent = codeBox
 
 local mainButton = Instance.new("TextButton")
-mainButton.Size = UDim2.new(1, 0, 0, 34)
-mainButton.BackgroundColor3 = Color3.fromRGB(36, 38, 40)
+mainButton.Size = UDim2.new(1, 0, 0, 46)
+mainButton.BackgroundColor3 = Color3.fromRGB(40, 42, 44)
 mainButton.AutoButtonColor = true
-mainButton.Font = Enum.Font.GothamMedium
+mainButton.Font = Enum.Font.BuilderSansMedium
 mainButton.TextColor3 = bright
-mainButton.TextSize = 13
+mainButton.TextSize = 18
 mainButton.LayoutOrder = 4
 mainButton.Parent = root
 boxCorner:Clone().Parent = mainButton
 local buttonStroke = boxStroke:Clone()
-buttonStroke.Color = Color3.fromRGB(60, 62, 66)
+buttonStroke.Color = Color3.fromRGB(78, 80, 84)
 buttonStroke.Parent = mainButton
 
 local applyButton = mainButton:Clone()
@@ -129,7 +134,7 @@ applyButton.Visible = false
 applyButton.Parent = root
 
 local track = Instance.new("Frame")
-track.Size = UDim2.new(1, 0, 0, 4)
+track.Size = UDim2.new(1, 0, 0, 8)
 track.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 track.BorderSizePixel = 0
 track.LayoutOrder = 6
@@ -149,9 +154,9 @@ local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
 status.Size = UDim2.fromScale(1, 0)
 status.AutomaticSize = Enum.AutomaticSize.Y
-status.Font = Enum.Font.Gotham
+status.Font = Enum.Font.BuilderSansMedium
 status.TextColor3 = muted
-status.TextSize = 12
+status.TextSize = 17
 status.TextWrapped = true
 status.TextXAlignment = Enum.TextXAlignment.Left
 status.LayoutOrder = 7
@@ -159,11 +164,11 @@ status.Parent = root
 
 local disconnectButton = Instance.new("TextButton")
 disconnectButton.BackgroundTransparency = 1
-disconnectButton.Size = UDim2.new(1, 0, 0, 16)
-disconnectButton.Font = Enum.Font.Gotham
+disconnectButton.Size = UDim2.new(1, 0, 0, 22)
+disconnectButton.Font = Enum.Font.BuilderSans
 disconnectButton.Text = "Disconnect"
-disconnectButton.TextColor3 = Color3.fromRGB(102, 102, 102)
-disconnectButton.TextSize = 12
+disconnectButton.TextColor3 = Color3.fromRGB(150, 150, 150)
+disconnectButton.TextSize = 15
 disconnectButton.TextXAlignment = Enum.TextXAlignment.Left
 disconnectButton.LayoutOrder = 8
 disconnectButton.Parent = root
@@ -390,7 +395,7 @@ local function scanAndSend()
 		setStatus("No asset ids found in this place.")
 		return
 	end
-	local sent = call("POST", "/api/studio/submit", { place = game.Name, ids = ids })
+	local sent = call("POST", "/api/studio/submit", { place = game.Name, place_id = game.PlaceId, ids = ids })
 	if not sent then
 		return
 	end

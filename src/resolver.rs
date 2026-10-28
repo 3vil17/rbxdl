@@ -51,6 +51,7 @@ pub async fn resolve(
     id: i64,
     version: Option<u32>,
     creator: Option<(String, i64)>,
+    hint_place: Option<i64>,
 ) -> Result<Attempt> {
     let has_cookies = pool.alive_count() > 0;
     if api_key.is_none() && !has_cookies {
@@ -107,11 +108,30 @@ pub async fn resolve(
         }
     }
 
+    let hint_place = hint_place.filter(|p| *p > 0);
+    if let Some(pid) = hint_place {
+        match via_cookie(rb, pool, id, Some(pid), version, &[]).await {
+            Ok((bytes, label)) => {
+                return Ok(Attempt {
+                    bytes,
+                    method: format!("Cookie \u{b7} {label} \u{b7} Place-Id {pid} (the place it's used in)"),
+                    place_id: Some(pid),
+                    account: Some(label),
+                })
+            }
+            Err(Some(d)) => notes.push(format!("Place-Id {pid} (the place it's used in): {}", d.error)),
+            Err(None) => {
+                limited = true;
+                notes.push("Place-Id (the place it's used in): rate limited".into());
+            }
+        }
+    }
+
     let Some((ctype, cid)) = creator.filter(|(_, cid)| *cid > 0) else {
         notes.push("Place-Id fallback: skipped, asset has no public creator info".into());
         return Err(finish(notes, limited));
     };
-    let mut tried_places: Vec<i64> = Vec::new();
+    let mut tried_places: Vec<i64> = hint_place.into_iter().collect();
     let owner = (ctype.as_str(), cid);
     let known = rb.known_places(&ctype, cid);
     if let Places::Hit(a) = try_places(rb, pool, id, version, &known, None, owner, &mut tried_places).await {

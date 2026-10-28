@@ -195,7 +195,7 @@
   .st { font-size: 0.63rem; font-family: monospace; padding: 2px 8px; border-radius: 99px; background: rgba(255,255,255,0.05); color: rgb(136,136,136); flex-shrink: 0; }
   .st.ok { background: rgba(59,234,87,0.1); color: rgb(59,186,87); }
   .st.error { background: rgba(236,59,71,0.12); color: rgb(208,96,112); }
-  .st.working, .st.waiting { color: rgb(212,212,212); }
+  .st.working, .st.waiting, .st.downloading, .st.downloaded, .st.uploading { color: rgb(212,212,212); }
   .row .btn { padding: 4px 9px; font-size: 12px; }
 
   input[type="text"], input[type="password"], select {
@@ -209,13 +209,15 @@
   select:hover { border-color: rgba(255, 255, 255, 0.2); }
   select:focus { border-color: rgba(255, 255, 255, 0.22); }
   select option { background: rgb(28,30,32); }
-  .pair { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 12px 14px; border-radius: 6px; background: rgb(22,22,22);
-    border: 1px solid rgba(255,255,255,0.09); flex-wrap: wrap; }
-  .tiles { display: flex; gap: 6px; }
-  .tiles span { width: 34px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px;
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-family: monospace; font-size: 1.35rem;
-    font-weight: 600; color: #fff; user-select: all; }
-  .tiles span:nth-child(3) { margin-right: 8px; }
+  .pair { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 18px 0 8px; }
+  .pair .code { font-family: monospace; font-size: 2.6rem; font-weight: 600; letter-spacing: 0.3em; color: #fff; user-select: all; margin-right: -0.3em; }
+  .pair .code span:nth-child(3) { margin-right: 0.45em; }
+  .pair-sub { font-size: 0.85rem; color: rgb(212,212,212); }
+  .pair-links { font-size: 0.78rem; color: rgb(144,144,144); margin-top: 4px; }
+  #st-nocode { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .st-on { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.88rem; color: rgb(224,224,224); }
+  .pl-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 14px;
+    padding-top: 12px; border-top: 1px solid var(--card-border); font-size: 0.75rem; color: rgb(144,144,144); }
   .st.ready { color: rgb(59,186,87); }
   .arrow { color: rgb(102,102,102); margin: 0 4px; }
   input:hover { border-color: rgba(255, 255, 255, 0.2); }
@@ -413,26 +415,25 @@
     <!-- MIGRATE -->
     <section id="tab-migrate" style="display:none; flex-direction:column; gap:10px;">
       <div class="card">
-        <div class="section-head">
-          <h2 class="sect" style="margin:0"><i data-i="plug"></i>Studio</h2>
-          <div style="display:flex; gap:8px">
+        <div id="st-on" class="st-on" style="display:none">
+          <div id="st-state"></div>
+          <a href="#" id="st-off">Disconnect</a>
+        </div>
+        <div id="st-pair" class="pair">
+          <h2 class="sect" style="margin:0 0 4px"><i data-i="plug"></i>Connect Studio</h2>
+          <div id="st-code" style="display:none">
+            <div class="code" id="st-tiles"></div>
+            <div class="pair-sub">Type this into the rbxyoinker plugin in Studio</div>
+            <div class="pair-links"><span id="st-left"></span> · <a href="#" id="st-copy">Copy</a> · <a href="#" id="st-new">New code</a></div>
+          </div>
+          <div id="st-nocode">
+            <div class="pair-sub">Open the plugin in Studio, then get a code and type it in.</div>
             <button class="btn" id="st-code-btn" data-i="key">Get a code</button>
-            <button class="btn" id="st-off" data-i="x" style="display:none">Disconnect</button>
           </div>
         </div>
-        <div id="st-state" class="hint" style="margin-top:10px"></div>
-        <div id="st-code" class="pair" style="display:none">
-          <div class="tiles" id="st-tiles"></div>
-          <div style="flex:1; min-width:140px">
-            <div style="font-size:0.8rem; color:rgb(212,212,212)">Type this into the plugin</div>
-            <div class="hint" style="margin:2px 0 0" id="st-left"></div>
-          </div>
-          <button class="btn" id="st-copy" data-i="copy">Copy</button>
-        </div>
-        <div class="sep"></div>
-        <div class="section-head">
-          <div style="font-size:0.8rem; color:rgb(170,170,170)" id="pl-state">Plugin</div>
-          <button class="btn" id="pl-install" data-i="download">Install plugin</button>
+        <div class="pl-line">
+          <span id="pl-state">Plugin</span>
+          <a href="#" id="pl-install">Install plugin</a>
         </div>
         <div id="pl-pick" style="display:none; margin-top:10px">
           <p class="hint" style="margin:0 0 8px">Couldn't find Studio's Plugins folder. In Studio it's <b>Plugins tab, Plugins Folder</b>. Pick or paste it here.</p>
@@ -472,7 +473,7 @@
         <div class="counts" id="mg-counts"></div>
         <div class="note" id="mg-note"></div>
         <div class="rows" id="mg-rows"></div>
-        <p class="hint">Only assets made by one of your signed in accounts, or a group one of them manages, get moved. Shared from a group you don't manage? Sign in an account that manages it, or have its owner grant your new game access in Creator Hub (asset, Permissions) so it keeps working without a reupload.</p>
+        <p class="hint">Every asset gets downloaded the same way Bulk does it (all your signed in accounts, this place's id, then the creator's games), then reuploaded to the group you picked. Anything that can't be downloaded shows why and stays as it is.</p>
       </div>
     </section>
 
@@ -867,24 +868,30 @@ async function pollStudio() {
   if (!res.ok) return;
   const s = res.data;
   const live = s.connected && s.seen_ago != null && s.seen_ago < 15;
-  $("#st-off").style.display = s.connected ? "" : "none";
-  $("#st-state").innerHTML = s.connected
-    ? '<span class="dot ' + (live ? "on" : "off") + '"></span>' + (live ? "Connected" : "Paired, Studio isn't talking right now") + (s.place ? " · <b>" + esc(s.place) + "</b>" : "")
-    : "Install the rbxyoinker plugin in Studio, click <b>Get a code</b> here and type it into the plugin.";
+  $("#st-on").style.display = s.connected ? "" : "none";
+  $("#st-pair").style.display = s.connected ? "none" : "";
+  $("#st-state").innerHTML = '<span class="dot ' + (live ? "on" : "off") + '"></span>' +
+    (live ? "Studio connected" : "Paired, Studio isn't talking right now") + (s.place ? " · <b>" + esc(s.place) + "</b>" : "");
   stCode = s.code || "";
   $("#st-code").style.display = s.code ? "" : "none";
+  $("#st-nocode").style.display = s.code ? "none" : "";
   if (s.code) {
-    const tiles = [...s.code].map((d) => "<span>" + esc(d) + "</span>").join("");
-    if ($("#st-tiles").dataset.code !== s.code) { $("#st-tiles").innerHTML = tiles; $("#st-tiles").dataset.code = s.code; }
+    if ($("#st-tiles").dataset.code !== s.code) {
+      $("#st-tiles").innerHTML = [...s.code].map((d) => "<span>" + esc(d) + "</span>").join("");
+      $("#st-tiles").dataset.code = s.code;
+    }
     const left = s.code_left || 0;
     $("#st-left").textContent = "Expires in " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
   }
 }
 let stCode = "";
-$("#st-code-btn").onclick = async () => { await post("/api/studio/code", {}); pollStudio(); };
-$("#st-copy").onclick = async () => {
+async function newCode(e) { if (e) e.preventDefault(); await post("/api/studio/code", {}); pollStudio(); }
+$("#st-code-btn").onclick = () => newCode();
+$("#st-new").onclick = newCode;
+$("#st-copy").onclick = async (e) => {
+  e.preventDefault();
   if (!stCode) return;
-  try { await navigator.clipboard.writeText(stCode); setBtn($("#st-copy"), "copy", "Copied"); setTimeout(() => setBtn($("#st-copy"), "copy", "Copy"), 1200); } catch (e) {}
+  try { await navigator.clipboard.writeText(stCode); $("#st-copy").textContent = "Copied"; setTimeout(() => { $("#st-copy").textContent = "Copy"; }, 1200); } catch (err) {}
 };
 async function loadPluginState() {
   const res = await api("/api/studio/plugin"); if (!res.ok) return;
@@ -892,7 +899,7 @@ async function loadPluginState() {
   $("#pl-state").innerHTML = '<span class="dot ' + (p.up_to_date ? "on" : "off") + '"></span>Plugin ' +
     (p.up_to_date ? "installed" : p.installed ? "installed, but out of date" : "not installed") +
     (p.dir ? ' <span style="color:rgb(102,102,102)">in ' + esc(p.dir) + "</span>" : "");
-  setBtn($("#pl-install"), "download", p.up_to_date ? "Reinstall" : p.installed ? "Update plugin" : "Install plugin");
+  $("#pl-install").textContent = p.up_to_date ? "Reinstall" : p.installed ? "Update plugin" : "Install plugin";
 }
 async function installPlugin(dir) {
   const res = await post("/api/studio/install", dir ? { dir } : {});
@@ -902,13 +909,14 @@ async function installPlugin(dir) {
   showNote($("#pl-note"), "ok", "Installed to <code>" + esc(res.data.path) + "</code>. Restart Studio (or reopen your place) to load it, then find <b>rbxyoinker, Migrate</b> in the Plugins tab.");
   loadPluginState();
 }
-$("#pl-install").onclick = () => installPlugin(null);
+$("#pl-install").onclick = (e) => { e.preventDefault(); installPlugin(null); };
 $("#pl-here").onclick = () => installPlugin($("#pl-dir").value.trim());
 $("#pl-browse").onclick = async () => {
   const res = await post("/api/studio/pick-plugins", {});
   if (res.ok && res.data.dir) $("#pl-dir").value = res.data.dir;
 };
-$("#st-off").onclick = async () => {
+$("#st-off").onclick = async (e) => {
+  e.preventDefault();
   if (!confirm("Disconnect Studio? The plugin will need a new code.")) return;
   await post("/api/studio/disconnect", {}); pollStudio();
 };
@@ -922,11 +930,6 @@ async function loadTargets() {
   fillTargets();
 }
 function mgAccount() { return mgTargets.find((t) => String(t.user_id) === $("#mg-acc").value) || mgTargets[0]; }
-function mgYours() {
-  const out = new Set();
-  mgTargets.forEach((a) => { out.add("User:" + a.user_id); a.groups.forEach((g) => out.add("Group:" + g.id)); });
-  return out;
-}
 function fillTargets() {
   const a = mgAccount();
   if (!a) { $("#mg-to").innerHTML = "<option>No signed in accounts, add a cookie in Settings</option>"; renderMigrate(); return; }
@@ -955,18 +958,18 @@ async function pollMigrate() {
   renderMigrate();
 }
 function mgPicked() {
-  const yours = mgYours(), to = $("#mg-to").value;
-  return (mgJob ? mgJob.items : []).filter((it) => it.kind && !mgKindsOff.has(it.kind) && yours.has(it.owner) && it.owner !== to && it.state !== "ok");
+  const to = $("#mg-to").value;
+  return (mgJob ? mgJob.items : []).filter((it) => it.kind && !mgKindsOff.has(it.kind) && it.owner !== to && it.state !== "ok");
 }
 function renderMigrate() {
   const j = mgJob;
   $("#mg-card").style.display = j && j.items.length ? "" : "none";
   if (!j || !j.items.length) return;
-  const yours = mgYours();
+  const to = $("#mg-to").value;
   $("#mg-title").textContent = j.place || "Assets from Studio";
-  const movable = j.items.filter((it) => it.kind && yours.has(it.owner));
+  const movable = j.items.filter((it) => it.kind && it.owner !== to);
   $("#mg-source").innerHTML = j.items.length + " asset ids from Studio" + (j.checked
-    ? ", " + movable.length + " can be moved. The rest belong to other creators or are types Roblox won't take, so they stay as they are."
+    ? ", " + movable.length + " can be moved. The rest are already there or are types Roblox won't take, so they stay as they are."
     : ' <span class="spinner"></span> reading them');
   const counts = {};
   movable.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
@@ -984,8 +987,8 @@ function renderMigrate() {
   $("#mg-bar").style.width = (moved.length ? (done / moved.length) * 100 : 0) + "%";
   $("#mg-counts").innerHTML = moved.length ? "<span><b>" + done + "</b> / " + moved.length + " done</span><span><b>" + c.ok + "</b> moved</span><span><b>" + c.error + "</b> failed</span>" : "";
   $("#mg-rows").innerHTML = j.items.map((it) => {
-    const mine = it.kind && yours.has(it.owner);
-    const state = it.state !== "found" ? it.state : !j.checked ? "" : mine ? (mgKindsOff.has(it.kind) ? "off" : "ready") : "stays";
+    const mine = it.kind && it.owner !== to;
+    const state = it.state !== "found" ? it.state : !j.checked ? "" : mine ? (mgKindsOff.has(it.kind) ? "off" : "ready") : it.kind ? "there" : "stays";
     return '<div class="row"' + (mine || it.state !== "found" ? "" : ' style="opacity:0.5"') + ">" +
       (mgThumbs[it.id] ? '<img class="rthumb" loading="lazy" src="' + esc(mgThumbs[it.id]) + '" alt="" />' : '<span class="rthumb"></span>') +
       '<div class="main"><div class="t">' + esc(it.name || "asset") + " <span>#" + it.id + "</span>" +

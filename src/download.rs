@@ -69,7 +69,7 @@ pub async fn fetch_and_save(
     if name == "[ Content Deleted ]" {
         return Err(Error::Denied("this asset was moderated by Roblox (content deleted)".into()));
     }
-    let mut attempt = match resolver::resolve(rb, api_key, pool, id, version, creator).await {
+    let mut attempt = match resolver::resolve(rb, api_key, pool, id, version, creator, None).await {
         Ok(a) => a,
         Err(Error::Denied(msg)) if atype0 == 10 => {
             return Err(Error::Denied(format!(
@@ -83,7 +83,7 @@ pub async fn fetch_and_save(
     let follow = matches!(atype0, 0 | 1 | 13);
     if let Some(inner) = convert::inner_asset_id(&attempt.bytes).filter(|_| follow) {
         if inner != id {
-            if let Ok(a2) = resolver::resolve(rb, api_key, pool, inner, None, None).await {
+            if let Ok(a2) = resolver::resolve(rb, api_key, pool, inner, None, None, None).await {
                 attempt.bytes = a2.bytes;
                 attempt.method = format!("{} (decal \u{2192} {})", attempt.method, inner);
                 atype = 1;
@@ -140,7 +140,8 @@ pub async fn resolve_bytes(
     api_key: Option<&str>,
     pool: &Pool,
     id: i64,
+    place: Option<i64>,
 ) -> Result<Vec<u8>> {
     let creator = rb.asset_details(id).await.ok().map(|d| (d.creator_type, d.creator_id));
-    Ok(resolver::resolve(rb, api_key, pool, id, None, creator).await?.bytes)
+    Ok(resolver::resolve(rb, api_key, pool, id, None, creator, place).await?.bytes)
 }

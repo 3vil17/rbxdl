@@ -341,7 +341,7 @@ async fn raw_asset(State(st): State<AppState>, Query(q): Query<RawQ>) -> axum::r
         return (axum::http::StatusCode::BAD_REQUEST, "bad id").into_response();
     };
     let api_key = store::get_secret("api_key");
-    match download::resolve_bytes(&st.rb, api_key.as_deref(), &st.pool, id).await {
+    match download::resolve_bytes(&st.rb, api_key.as_deref(), &st.pool, id, None).await {
         Ok(bytes) => ([(header::CONTENT_TYPE, crate::convert::mime_for(&bytes))], bytes).into_response(),
         Err(e) => (axum::http::StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
     }
@@ -871,6 +871,8 @@ async fn studio_pair(State(st): State<AppState>, Json(body): Json<PairBody>) -> 
 struct StudioSubmit {
     #[serde(default)]
     place: String,
+    #[serde(default)]
+    place_id: i64,
     ids: Vec<String>,
 }
 
@@ -899,6 +901,7 @@ async fn studio_submit(
         let run_id = j.run_id;
         *j = crate::migrate::Job {
             place: place.clone(),
+            place_id: body.place_id.max(0),
             run_id,
             items: ids
                 .iter()
@@ -925,7 +928,7 @@ async fn migrate_job(State(st): State<AppState>) -> Json<Value> {
 }
 
 /// Each signed in account with the creators it can upload to: itself and
-/// every group it manages. Assets only move between these.
+/// every group it manages.
 async fn migrate_targets(State(st): State<AppState>) -> Json<Value> {
     let mut out = Vec::new();
     for (uid, username, avatar) in st.pool.alive_users() {
@@ -975,14 +978,6 @@ async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart
     if !(body.to == format!("User:{}", body.user_id) || manage.iter().any(|g| body.to == format!("Group:{g}"))) {
         return fail("this account can't upload to that group");
     }
-    let mut yours: Vec<String> = Vec::new();
-    for (uid, _, _) in st.pool.alive_users() {
-        yours.push(format!("User:{uid}"));
-        let Some(c) = st.pool.cookie_for_user(uid) else { continue };
-        for g in st.rb.manageable_groups(&c).await.unwrap_or_default() {
-            yours.push(format!("Group:{g}"));
-        }
-    }
     let wanted: Vec<i64> = body.ids.iter().filter_map(|x| x.parse().ok()).collect();
     let todo: Vec<usize> = {
         let mut j = crate::migrate::lock(&st.migrate);
@@ -1001,12 +996,11 @@ async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart
                     && !it.kind.is_empty()
                     && it.state != "ok"
                     && it.owner != body.to
-                    && yours.contains(&it.owner)
             })
             .map(|(i, _)| i)
             .collect();
         if todo.is_empty() {
-            return fail("nothing to move. Only assets made by your accounts or groups they manage can be moved");
+            return fail("nothing to move, everything picked is already there or is a type Roblox won't take");
         }
         for &i in &todo {
             j.items[i].state = "queued".into();
