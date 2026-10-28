@@ -149,15 +149,7 @@
   .avatar { width: 30px; height: 30px; border-radius: 50%; background: rgb(40,40,40); object-fit: cover; flex-shrink: 0;
     border: 1px solid rgba(255,255,255,0.1); }
   .avatar.off { filter: grayscale(1); opacity: 0.5; }
-  .ckrow { display: flex; align-items: center; gap: 9px; padding: 6px 2px; border-bottom: 1px solid var(--card-border); font-size: 0.78rem; }
-  .ckrow:last-child { border-bottom: none; }
-  .ckrow img { width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; background: rgb(40,40,40); border: 1px solid rgba(255,255,255,0.1); }
-  .ckrow img.off { filter: grayscale(1); opacity: 0.5; }
-  .ckrow .nm { color: rgb(224,224,224); white-space: nowrap; }
-  .ckrow .nm.dead { color: rgb(208,96,112); }
-  .ckrow .pv { flex: 1; min-width: 0; color: rgb(102,102,102); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ckrow .rm { appearance: none; background: none; border: 0; color: rgb(102,102,102); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 14px; line-height: 1; }
-  .ckrow .rm:hover { color: rgb(208,96,112); background: rgba(236,59,71,0.12); }
+  #cookie-display { color: rgb(170,170,170); min-height: 0; height: auto; }
   .bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; margin-top: 14px; }
   .bar div { height: 100%; width: 0; background: var(--green); transition: width 0.3s; }
   .counts { display: flex; gap: 14px; font-size: 0.75rem; color: rgb(136,136,136); margin-top: 8px; flex-wrap: wrap; }
@@ -395,12 +387,13 @@
         <p class="hint">Open Cloud key, scope <code>legacy-asset:manage</code>. Leave blank to keep what's saved.</p>
 
         <div class="sep"></div>
-        <div class="fgrid"><label>Cookies <span id="cookie-count"></span></label><div></div></div>
-        <div id="cookie-list"></div>
+        <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:0 0 8px;">Cookies <span id="cookie-count"></span></label>
+        <textarea id="cookie-display" class="lines" wrap="off" readonly spellcheck="false" placeholder="No cookies yet. Paste one below."></textarea>
         <div class="frow" style="margin-top:8px">
           <input id="cookies" type="password" placeholder="Paste a .ROBLOSECURITY to add" autocomplete="off" />
           <button class="btn" id="add-cookies" data-i="plus">Add</button>
         </div>
+        <div class="fbtns"><button class="btn" id="clear-cookies" data-i="trash">Remove all cookies</button></div>
         <p class="hint">Each cookie is a full login, kept only on this PC. Add more to spread bulk downloads across them and avoid rate limits. Paste several at once separated by spaces.</p>
         <div class="note" id="cookie-note"></div>
       </div>
@@ -623,23 +616,20 @@ async function loadSettings() {
   loadCookies();
 }
 async function loadCookies() {
-  const res = await api("/api/accounts"); const list = $("#cookie-list");
+  const res = await api("/api/accounts");
   const rows = res.ok ? res.data : [];
   $("#cookie-count").textContent = rows.length ? "(" + rows.length + " saved, " + rows.filter((a) => a.alive).length + " alive)" : "";
-  if (!rows.length) { list.innerHTML = '<div class="empty" style="padding:8px 0">No cookies yet. Paste one below.</div>'; return; }
-  list.innerHTML = rows.map((a, i) =>
-    '<div class="ckrow"><img class="' + (a.alive ? "" : "off") + '" src="' + esc(a.avatar || "/logo.png") + '" alt="" />' +
-    '<span class="nm' + (a.alive ? "" : " dead") + '">' + (a.username ? "@" + esc(a.username) : "unknown") + (a.alive ? "" : " (expired)") + "</span>" +
-    '<span class="pv">' + esc(a.preview || "") + "</span>" +
-    '<button class="rm" data-x="' + i + '" title="Remove">&#10005;</button></div>').join("");
-  list.querySelectorAll("button[data-x]").forEach((b) => {
-    b.onclick = async () => {
-      const r = await post("/api/cookies/remove", { index: Number(b.dataset.x) });
-      if (!r.ok) { showNote($("#cookie-note"), "err", esc(r.error)); return; }
-      loadCookies();
-    };
-  });
+  const disp = $("#cookie-display");
+  disp.value = rows.map((a) =>
+    "@" + (a.username || "unknown") + " (" + (a.preview || "") + ")" + (a.alive ? "" : "  - expired")).join(String.fromCharCode(10));
+  disp.rows = Math.max(2, rows.length);
 }
+$("#clear-cookies").onclick = async () => {
+  if (!confirm("Remove all saved cookies?")) return;
+  const res = await post("/api/credentials", { cookies: "" });
+  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
+  showNote($("#cookie-note"), "ok", "Removed all cookies."); loadCookies();
+};
 $("#save-key").onclick = async () => {
   const k = $("#api-key").value;
   if (k === "") { showNote($("#cookie-note"), "info", "Nothing to save, the API key field is empty."); return; }
