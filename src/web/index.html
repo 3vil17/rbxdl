@@ -418,7 +418,7 @@
       </div>
     </section>
 
-    <p class="foot">rbx<b>yoinker</b> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT · <a href="#" id="quit-link">Quit</a></p>
+    <p class="foot">rbx<b>yoinker</b> <span id="app-version"></span> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT · <a href="#" id="quit-link">Quit</a></p>
   </div>
 
 <div class="modal-bg" id="forced" style="display:none; z-index:20">
@@ -877,7 +877,11 @@ $("#clear-hist").onclick = async () => { await post("/api/history/clear", {}); l
 $("#asset-input").focus();
 checkHealth();
 loadRecent();
-api("/api/settings").then((res) => { if (res.ok && !res.data.accepted_terms) $("#terms").style.display = "flex"; });
+api("/api/settings").then((res) => {
+  if (!res.ok) return;
+  $("#app-version").textContent = "v" + res.data.version;
+  if (!res.data.accepted_terms) $("#terms").style.display = "flex";
+});
 $("#quit-link").onclick = async (e) => {
   e.preventDefault();
   if (!confirm("Close rbxyoinker? Running downloads will stop.")) return;

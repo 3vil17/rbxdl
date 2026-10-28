@@ -83,7 +83,15 @@ async fn already_running() -> Option<String> {
 
 pub async fn run(updated: bool) -> std::io::Result<()> {
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::fs::remove_file(exe.with_extension("old.exe"));
+        let old = exe.with_extension("old.exe");
+        tokio::spawn(async move {
+            for _ in 0..30 {
+                if !old.exists() || std::fs::remove_file(&old).is_ok() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        });
     }
     if updated {
         for _ in 0..50 {
@@ -284,6 +292,7 @@ async fn get_settings() -> Json<Value> {
         "sort_by_type": s.sort_by_type,
         "mesh_obj": s.mesh_obj,
         "accepted_terms": s.accepted_terms,
+        "version": env!("CARGO_PKG_VERSION"),
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
     }))
