@@ -1,4 +1,3 @@
-/// Pick a file extension from the asset content, falling back to its type id.
 pub fn extension_for(bytes: &[u8], asset_type_id: i64) -> &'static str {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return "png";
@@ -22,7 +21,6 @@ pub fn extension_for(bytes: &[u8], asset_type_id: i64) -> &'static str {
         return "mesh";
     }
     if bytes.starts_with(b"<roblox") || bytes.starts_with(b"<?xml") {
-        // XML wrapper, could be an rbxmx model or a decal/image descriptor.
         match asset_type_id {
             1 | 13 | 18 => "png",
             _ => "rbxmx",
@@ -59,7 +57,6 @@ pub fn inner_asset_id(bytes: &[u8]) -> Option<i64> {
     None
 }
 
-/// Human-readable asset type label for the UI.
 pub fn type_label(asset_type_id: i64) -> &'static str {
     match asset_type_id {
         1 => "Image",

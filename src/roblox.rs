@@ -45,7 +45,6 @@ impl Roblox {
         Self { http }
     }
 
-    /// Public catalog metadata, no auth required.
     pub async fn asset_details(&self, id: i64) -> Result<AssetDetails> {
         let url = format!("https://economy.roblox.com/v2/assets/{id}/details");
         let v: Value = self.http.get(&url).send().await?.json().await?;
@@ -72,7 +71,26 @@ impl Roblox {
         v["data"][0]["imageUrl"].as_str().map(|s| s.to_string())
     }
 
-    /// Check whether a .ROBLOSECURITY cookie is still valid, and who it belongs to.
+    pub async fn user_headshots(&self, ids: &[i64]) -> std::collections::HashMap<i64, String> {
+        let mut out = std::collections::HashMap::new();
+        if ids.is_empty() {
+            return out;
+        }
+        let list: Vec<String> = ids.iter().map(|i| i.to_string()).collect();
+        let url = format!(
+            "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={}&size=48x48&format=Png&isCircular=false",
+            list.join(",")
+        );
+        let Ok(resp) = self.http.get(&url).send().await else { return out };
+        let Ok(v) = resp.json::<Value>().await else { return out };
+        for it in v["data"].as_array().into_iter().flatten() {
+            if let (Some(id), Some(img)) = (it["targetId"].as_i64(), it["imageUrl"].as_str()) {
+                out.insert(id, img.to_string());
+            }
+        }
+        out
+    }
+
     pub async fn cookie_info(&self, cookie: &str) -> CookieInfo {
         let auth = self
             .http
@@ -110,7 +128,6 @@ impl Roblox {
         }
     }
 
-    /// Places owned by a user or group, used as place-id authorization candidates.
     pub async fn list_creator_places(&self, creator_type: &str, creator_id: i64) -> Vec<PlaceRef> {
         let base = if creator_type.eq_ignore_ascii_case("Group") {
             format!("https://games.roblox.com/v2/groups/{creator_id}/games")
@@ -148,7 +165,6 @@ impl Roblox {
         out
     }
 
-    /// Open Cloud route: API-key auth. Returns the raw asset bytes.
     pub async fn fetch_opencloud(&self, api_key: &str, id: i64) -> Result<Vec<u8>> {
         let url = format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{id}");
         let resp = self
@@ -170,7 +186,6 @@ impl Roblox {
         Ok(bytes.to_vec())
     }
 
-    /// Cookie route on assetdelivery. `place_id` supplies the authorization context.
     pub async fn fetch_cookie(
         &self,
         cookie: &str,
@@ -222,8 +237,6 @@ fn message_of(v: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Turn a failed Roblox response into a readable error, keeping the status and
-/// Roblox's own message. 429 becomes `RateLimited` with the Retry-After value.
 async fn error_from(resp: reqwest::Response) -> Error {
     let status = resp.status().as_u16();
     let retry = resp

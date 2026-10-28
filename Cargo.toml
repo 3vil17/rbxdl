@@ -16,6 +16,8 @@ keyring = { version = "3", features = ["windows-native"] }
 dirs = "5"
 thiserror = "2"
 open = "5"
+rfd = "0.15"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 opt-level = "s"

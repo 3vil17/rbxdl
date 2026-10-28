@@ -15,8 +15,6 @@ struct Denial {
     label: String,
 }
 
-/// One cookie request through the pool. A 429 cools that account down and the
-/// request moves on to the next ready one.
 async fn via_cookie(
     rb: &Roblox,
     pool: &Pool,
@@ -45,9 +43,6 @@ async fn via_cookie(
     Err(None)
 }
 
-/// Walk the authorization ladder: API key, then a direct request with each
-/// account, then the creator's own places used as a `Roblox-Place-Id` context.
-/// On failure the error lists what each step got back.
 pub async fn resolve(
     rb: &Roblox,
     api_key: Option<&str>,
@@ -148,7 +143,6 @@ pub async fn resolve(
     Err(finish(notes, limited))
 }
 
-/// Only call it a rate limit when nothing else gave a real answer.
 fn finish(notes: Vec<String>, limited: bool) -> Error {
     if limited && notes.iter().all(|n| n.contains("rate limited")) {
         Error::RateLimited(0)

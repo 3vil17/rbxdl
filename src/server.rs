@@ -61,6 +61,7 @@ pub async fn run() -> std::io::Result<()> {
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
         .route("/api/reveal", post(reveal))
+        .route("/api/pick-folder", post(pick_folder))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -88,7 +89,6 @@ fn fail(msg: impl Into<String>) -> Json<Value> {
     Json(json!({ "ok": false, "error": msg.into() }))
 }
 
-/// Pull an asset id out of a plain number or any Roblox URL the user pastes.
 fn parse_asset_id(input: &str) -> Option<i64> {
     let digits: String = input.chars().filter(|c| c.is_ascii_digit()).collect();
     if let Ok(n) = input.trim().parse::<i64>() {
@@ -96,7 +96,6 @@ fn parse_asset_id(input: &str) -> Option<i64> {
             return Some(n);
         }
     }
-    // Longest run of digits, handles catalog/library/create URLs.
     let mut best = String::new();
     let mut cur = String::new();
     for ch in input.chars() {
@@ -218,8 +217,6 @@ struct CredsBody {
     cookies: Option<String>,
 }
 
-/// One cookie per line (or separated by spaces). A pasted `.ROBLOSECURITY=`
-/// prefix is stripped, duplicates are dropped.
 fn parse_cookies(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for part in raw.split(|c: char| c.is_whitespace() || c == ';') {
@@ -303,8 +300,6 @@ fn bulk_set(st: &AppState, i: usize, f: impl FnOnce(&mut BulkItem)) -> bool {
     b.cancel
 }
 
-/// Workers pull ids off a shared index. A rate-limited asset waits and retries
-/// instead of failing, the pool decides which account goes next.
 async fn run_bulk(st: AppState, ids: Vec<i64>, workers: usize) {
     let ids = Arc::new(ids);
     let next = Arc::new(AtomicUsize::new(0));
@@ -382,15 +377,103 @@ struct RevealBody {
     path: String,
 }
 
-/// Open the system file browser with the saved file selected (Windows).
+// Windows only lets the process that got the last input steal focus, and that's
+// the browser. A no-op mouse move makes it us, then we pass the right on.
+fn unlock_foreground() {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT { dx: 0, dy: 0, mouseData: 0, dwFlags: MOUSEEVENTF_MOVE, time: 0, dwExtraInfo: 0 },
+        },
+    };
+    unsafe {
+        SendInput(1, &input, std::mem::size_of::<INPUT>() as i32);
+        AllowSetForegroundWindow(ASFW_ANY);
+    }
+}
+
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+// Explorer often opens behind the browser anyway, so find its window by title
+// and raise it ourselves.
+async fn raise_explorer(dir: std::path::PathBuf) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowExW, GetWindowTextW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+    let full = dir.to_string_lossy().to_lowercase();
+    let name = dir.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let class = wide("CabinetWClass");
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let mut found = None;
+        unsafe {
+            let mut h = FindWindowExW(std::ptr::null_mut(), std::ptr::null_mut(), class.as_ptr(), std::ptr::null());
+            while !h.is_null() {
+                let mut buf = [0u16; 512];
+                let n = GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32);
+                let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]).to_lowercase();
+                let base = title.split(" - ").next().unwrap_or("");
+                if base == name || base == full {
+                    found = Some(h as usize);
+                    break;
+                }
+                h = FindWindowExW(std::ptr::null_mut(), h, class.as_ptr(), std::ptr::null());
+            }
+        }
+        if let Some(h) = found {
+            unlock_foreground();
+            unsafe {
+                let h = h as windows_sys::Win32::Foundation::HWND;
+                if IsIconic(h) != 0 {
+                    ShowWindow(h, SW_RESTORE);
+                }
+                SetForegroundWindow(h);
+            }
+            return;
+        }
+    }
+}
+
+async fn pick_folder() -> Json<Value> {
+    let start = store::load_settings().save_dir;
+    let picked = tokio::task::spawn_blocking(move || {
+        unlock_foreground();
+        rfd::FileDialog::new().set_title("Download folder").set_directory(&start).pick_folder()
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(dir) = picked else {
+        return ok(json!({ "save_dir": Value::Null }));
+    };
+    let s = store::Settings { save_dir: dir.to_string_lossy().to_string() };
+    match store::save_settings(&s) {
+        Ok(_) => ok(json!({ "save_dir": s.save_dir })),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
 async fn reveal(Json(body): Json<RevealBody>) -> Json<Value> {
-    let path = body.path.trim();
+    let path = body.path.trim().replace('/', "\\");
     if path.is_empty() {
         return fail("no path");
     }
-    let res = std::process::Command::new("explorer")
-        .arg(format!("/select,{path}"))
-        .spawn();
+    let p = std::path::Path::new(&path);
+    let Some(dir) = p.parent().filter(|d| d.exists()).map(|d| d.to_path_buf()) else {
+        return fail("that folder no longer exists");
+    };
+    let arg = if p.exists() { format!("/select,{path}") } else { dir.to_string_lossy().to_string() };
+    unlock_foreground();
+    let res = std::process::Command::new("explorer").arg(arg).spawn();
+    if res.is_ok() {
+        tokio::spawn(raise_explorer(dir));
+    }
     match res {
         Ok(_) => ok(Value::Null),
         Err(e) => fail(e.to_string()),

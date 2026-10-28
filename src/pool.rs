@@ -13,6 +13,7 @@ struct Account {
     cookie: String,
     user_id: Option<i64>,
     username: Option<String>,
+    avatar: Option<String>,
     alive: bool,
     uses: u64,
     limited: u64,
@@ -58,8 +59,6 @@ impl Pool {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Re-read saved cookies and check who each one belongs to. Usage stats
-    /// carry over for cookies that were already loaded.
     pub async fn reload(&self, rb: &Roblox) {
         let cookies = store::load_cookies();
         let mut fresh = Vec::with_capacity(cookies.len());
@@ -76,6 +75,7 @@ impl Pool {
                 cookie,
                 user_id: info.user_id,
                 username: info.username,
+                avatar: None,
                 alive: info.alive,
                 uses,
                 limited,
@@ -84,6 +84,11 @@ impl Pool {
                 last_use: None,
                 last_error: if info.alive { None } else { Some("cookie is expired or invalid".into()) },
             });
+        }
+        let ids: Vec<i64> = fresh.iter().filter_map(|a| a.user_id).collect();
+        let shots = rb.user_headshots(&ids).await;
+        for a in &mut fresh {
+            a.avatar = a.user_id.and_then(|id| shots.get(&id).cloned());
         }
         let mut st = self.lock();
         st.accounts = fresh;
@@ -98,8 +103,6 @@ impl Pool {
         self.lock().accounts.iter().filter(|a| a.alive).count()
     }
 
-    /// Next ready account in round-robin order, skipping `exclude`. Waits while
-    /// every candidate is cooling down. None when there is nothing left to try.
     pub async fn acquire(&self, exclude: &[String]) -> Option<Lease> {
         let start = Instant::now();
         loop {
@@ -179,6 +182,7 @@ impl Pool {
                 json!({
                     "username": a.username,
                     "user_id": a.user_id,
+                    "avatar": a.avatar,
                     "alive": a.alive,
                     "uses": a.uses,
                     "limited": a.limited,

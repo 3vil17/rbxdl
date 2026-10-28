@@ -32,8 +32,6 @@ fn sanitize(name: &str) -> String {
     if trimmed.is_empty() { "asset".into() } else { trimmed.chars().take(80).collect() }
 }
 
-/// Resolve one asset through the auth ladder, follow a decal to its image, and
-/// write the file. Returns what happened, and records it in history.
 pub async fn fetch_and_save(
     rb: &Roblox,
     api_key: Option<&str>,

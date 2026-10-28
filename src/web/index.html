@@ -101,6 +101,14 @@
   textarea:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
   textarea::placeholder { color: rgb(85, 85, 85); }
   .note .line { display: block; }
+  textarea.lines {
+    white-space: pre; overflow-x: auto; overflow-wrap: normal; line-height: 26px; padding: 0 12px;
+    min-height: 132px; background-color: rgb(22, 22, 22); background-attachment: local;
+    background-image: repeating-linear-gradient(180deg, transparent 0 26px, rgba(255,255,255,0.025) 26px 52px);
+  }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: rgb(40,40,40); object-fit: cover; flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.1); }
+  .avatar.off { filter: grayscale(1); opacity: 0.5; }
   .bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; margin-top: 14px; }
   .bar div { height: 100%; width: 0; background: var(--green); transition: width 0.3s; }
   .counts { display: flex; gap: 14px; font-size: 0.75rem; color: rgb(136,136,136); margin-top: 8px; flex-wrap: wrap; }
@@ -287,6 +295,7 @@
           <h2 class="sect" style="margin:0"><i data-i="users"></i>Accounts in use</h2>
           <button class="btn" id="acc-refresh" data-i="refresh">Recheck</button>
         </div>
+        <div class="note" id="acc-note"></div>
         <div class="rows" id="acc-list"><div class="empty">Loading…</div></div>
         <p class="hint">Cookie requests rotate round-robin across live accounts, at most one request per account every 350 ms. A 429 cools that account down for Roblox's Retry-After, or 5s doubling up to 120s.</p>
       </div>
@@ -301,7 +310,7 @@
           <div class="frow"><input id="api-key" type="password" placeholder="Open Cloud key" autocomplete="off" /></div>
         </div>
         <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:12px 0 6px;">Cookies <span id="cookie-count"></span></label>
-        <textarea id="cookies" spellcheck="false" autocomplete="off" placeholder=".ROBLOSECURITY values, one per line"></textarea>
+        <textarea id="cookies" class="lines" wrap="off" spellcheck="false" autocomplete="off" placeholder=".ROBLOSECURITY values, one per line"></textarea>
         <div class="fbtns">
           <button class="btn" id="save-creds" data-i="save">Save credentials</button>
           <button class="btn" id="clear-cookies" data-i="trash">Remove all cookies</button>
@@ -316,6 +325,7 @@
           <label>Save to</label>
           <div class="frow">
             <input id="save-dir" type="text" placeholder="save folder" autocomplete="off" spellcheck="false" />
+            <button class="btn" id="browse-dir" data-i="folder">Browse</button>
             <button class="btn" id="save-dir-btn" data-i="save">Save</button>
           </div>
         </div>
@@ -451,16 +461,34 @@ $("#clear-cookies").onclick = () => { if (confirm("Remove all saved cookies?")) 
 async function loadAccounts(recheck) {
   const res = recheck ? await post("/api/accounts/refresh", {}) : await api("/api/accounts");
   const list = $("#acc-list");
-  if (!res.ok || !res.data.length) { list.innerHTML = '<div class="empty">No cookies saved. Add them in Settings.</div>'; return; }
+  if (!res.ok || !res.data.length) { list.innerHTML = '<div class="empty">No cookies saved. Add them in Settings.</div>'; return res.ok ? res.data : null; }
   list.innerHTML = res.data.map((a) => {
     const state = !a.alive ? '<span class="st error">dead</span>' : a.cooling ? '<span class="st working">cooling ' + a.cooling + "s</span>" : '<span class="st ok">ready</span>';
-    return '<div class="row"><span class="dot ' + (a.alive ? "on" : "off") + '"></span><div class="main">' +
+    return '<div class="row"><img class="avatar' + (a.alive ? "" : " off") + '" src="' + esc(a.avatar || "/logo.png") + '" alt="" /><div class="main">' +
       '<div class="t">' + (a.username ? "@" + esc(a.username) : "unknown") + (a.user_id ? " <span>#" + a.user_id + "</span>" : "") + "</div>" +
       '<div class="s">' + a.uses + " requests · " + a.limited + " rate limits" + (a.last_error ? " · " + esc(a.last_error) : "") + "</div>" +
       "</div>" + state + "</div>";
   }).join("");
+  return res.data;
 }
-$("#acc-refresh").onclick = () => loadAccounts(true);
+$("#acc-refresh").onclick = async () => {
+  const btn = $("#acc-refresh"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking…';
+  showNote($("#acc-note"), "info", "Checking every cookie with Roblox…");
+  const data = await loadAccounts(true);
+  btn.disabled = false; setBtn(btn, "refresh", "Recheck");
+  if (!data) { showNote($("#acc-note"), "err", "Couldn't reach the app."); return; }
+  const live = data.filter((a) => a.alive).length;
+  showNote($("#acc-note"), live === data.length && live ? "ok" : "err",
+    "Checked " + data.length + " cookie(s): " + live + " alive" + (data.length - live ? ", " + (data.length - live) + " expired or invalid" : "") + ".");
+  setTimeout(() => hideNote($("#acc-note")), 5000);
+};
+$("#browse-dir").onclick = async () => {
+  const btn = $("#browse-dir"); btn.disabled = true;
+  const res = await post("/api/pick-folder", {});
+  btn.disabled = false;
+  if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
+  if (res.data.save_dir) { $("#save-dir").value = res.data.save_dir; showNote($("#settings-note"), "ok", "Download folder saved."); }
+};
 
 // ---- Bulk ----
 function splitIds(text) { return text.split(/[\s,;]+/).map((s) => (s.match(/\d+/g) || []).sort((a, b) => b.length - a.length)[0]).filter(Boolean); }
