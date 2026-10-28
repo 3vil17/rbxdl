@@ -209,6 +209,10 @@
   select:hover { border-color: rgba(255, 255, 255, 0.2); }
   select:focus { border-color: rgba(255, 255, 255, 0.22); }
   select option { background: rgb(28,30,32); }
+  .pair { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 12px 14px; border-radius: 6px; background: rgb(22,22,22);
+    border: 1px solid rgba(255,255,255,0.09); flex-wrap: wrap; }
+  .pair .digits { font-family: monospace; font-size: 1.6rem; letter-spacing: 0.12em; color: #fff; font-weight: 600; }
+  .st.ready { color: rgb(59,186,87); }
   .arrow { color: rgb(102,102,102); margin: 0 4px; }
   input:hover { border-color: rgba(255, 255, 255, 0.2); }
   input:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
@@ -405,18 +409,31 @@
     <!-- MIGRATE -->
     <section id="tab-migrate" style="display:none; flex-direction:column; gap:10px;">
       <div class="card">
-        <h2 class="sect"><i data-i="move"></i>Move assets between groups</h2>
-        <p class="hint" id="mg-source" style="margin-top:0"></p>
-        <div class="fgrid" style="margin-top:12px">
+        <div class="section-head">
+          <h2 class="sect" style="margin:0"><i data-i="plug"></i>Studio</h2>
+          <div style="display:flex; gap:8px">
+            <button class="btn" id="st-code-btn" data-i="key">Get a code</button>
+            <button class="btn" id="st-off" data-i="x" style="display:none">Disconnect</button>
+          </div>
+        </div>
+        <div id="st-state" class="hint" style="margin-top:10px"></div>
+        <div id="st-code" class="pair" style="display:none"></div>
+      </div>
+
+      <div class="card" id="mg-card" style="display:none">
+        <div class="section-head">
+          <h2 class="sect" style="margin:0"><i data-i="layers"></i><span id="mg-title">Assets from Studio</span></h2>
+          <button class="btn" id="mg-bulk" data-i="download">Download all in Bulk</button>
+        </div>
+        <p class="hint" id="mg-source"></p>
+        <div class="chips" id="mg-kinds"></div>
+        <div class="sep"></div>
+        <div class="fgrid">
           <label id="mg-acc-label">Account</label>
           <select id="mg-acc"></select>
-          <label>From</label>
-          <select id="mg-from"></select>
-          <label>To</label>
+          <label>Move to</label>
           <select id="mg-to"></select>
         </div>
-        <div class="chips" id="mg-kinds"></div>
-        <p class="hint" id="mg-other"></p>
         <div class="seg" id="mg-mode">
           <button data-m="swap" class="on">Swap IDs in the place</button><button data-m="map">Only give me a mapping</button>
         </div>
@@ -430,7 +447,7 @@
         <div class="counts" id="mg-counts"></div>
         <div class="note" id="mg-note"></div>
         <div class="rows" id="mg-rows"></div>
-        <p class="hint">Only assets made by the <b>From</b> creator get uploaded, and your account has to manage both groups. Uploads go through your own login, the same as uploading in Studio.</p>
+        <p class="hint">Only assets made by your account or a group it manages get moved. Uploads go through your own login, the same as uploading in Studio.</p>
       </div>
     </section>
 
@@ -591,6 +608,7 @@ const ICONS = {
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
   move: '<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>',
   square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
@@ -817,7 +835,30 @@ $("#add-cookies").onclick = async () => {
 // ---- Migrate ----
 let mgTargets = [], mgJob = null, mgMode = "swap";
 const mgKindsOff = new Set();
+const mgThumbs = {};
 const KIND_NAMES = { Audio: "Sounds", Image: "Images", Mesh: "Meshes", Animation: "Animations" };
+async function pollStudio() {
+  const res = await api("/api/studio/status");
+  if (!res.ok) return;
+  const s = res.data;
+  const live = s.connected && s.seen_ago != null && s.seen_ago < 15;
+  $("#st-off").style.display = s.connected ? "" : "none";
+  $("#st-state").innerHTML = s.connected
+    ? '<span class="dot ' + (live ? "on" : "off") + '"></span>' + (live ? "Connected" : "Paired, Studio isn't talking right now") + (s.place ? " · <b>" + esc(s.place) + "</b>" : "")
+    : "Install the rbxyoinker plugin in Studio, click <b>Get a code</b> here and type it into the plugin.";
+  const box = $("#st-code");
+  if (s.code) {
+    box.style.display = "";
+    const left = s.code_left || 0;
+    box.innerHTML = '<span class="digits">' + esc(s.code.slice(0, 3)) + " " + esc(s.code.slice(3)) + "</span>" +
+      '<span class="hint" style="margin:0">Type this in the plugin. Expires in ' + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") + "</span>";
+  } else box.style.display = "none";
+}
+$("#st-code-btn").onclick = async () => { await post("/api/studio/code", {}); pollStudio(); };
+$("#st-off").onclick = async () => {
+  if (!confirm("Disconnect Studio? The plugin will need a new code.")) return;
+  await post("/api/studio/disconnect", {}); pollStudio();
+};
 async function loadTargets() {
   if (mgTargets.length) return;
   const res = await api("/api/migrate/targets");
@@ -825,82 +866,96 @@ async function loadTargets() {
   $("#mg-acc").innerHTML = mgTargets.map((t) => '<option value="' + t.user_id + '">@' + esc(t.username) + "</option>").join("");
   const one = mgTargets.length <= 1;
   $("#mg-acc").style.display = one ? "none" : ""; $("#mg-acc-label").style.display = one ? "none" : "";
-  fillCreators();
+  fillTargets();
 }
 function mgAccount() { return mgTargets.find((t) => String(t.user_id) === $("#mg-acc").value) || mgTargets[0]; }
-function mgBestFrom() {
-  const n = {};
-  (mgJob ? mgJob.items : []).forEach((it) => { if (it.kind && it.owner) n[it.owner] = (n[it.owner] || 0) + 1; });
-  return Object.keys(n).sort((x, y) => n[y] - n[x])[0] || null;
-}
-function fillCreators() {
+function mgYours() {
   const a = mgAccount();
-  if (!a) { $("#mg-from").innerHTML = $("#mg-to").innerHTML = "<option>No signed in accounts, add a cookie in Settings</option>"; renderMigrate(); return; }
-  const opts = '<option value="User:' + a.user_id + '">@' + esc(a.username) + " (you)</option>" +
-    a.groups.filter((g) => g.manage).map((g) => '<option value="Group:' + g.id + '">' + esc(g.name) + "</option>").join("");
-  const keepFrom = $("#mg-from").value, keepTo = $("#mg-to").value;
-  $("#mg-from").innerHTML = opts; $("#mg-to").innerHTML = opts;
-  const has = (sel, v) => [...sel.options].some((o) => o.value === v);
-  const best = mgBestFrom();
-  if (has($("#mg-from"), keepFrom)) $("#mg-from").value = keepFrom;
-  else if (best && has($("#mg-from"), best)) $("#mg-from").value = best;
-  if (has($("#mg-to"), keepTo)) $("#mg-to").value = keepTo;
+  return a ? new Set(["User:" + a.user_id].concat(a.groups.map((g) => "Group:" + g.id))) : new Set();
+}
+function fillTargets() {
+  const a = mgAccount();
+  if (!a) { $("#mg-to").innerHTML = "<option>No signed in accounts, add a cookie in Settings</option>"; renderMigrate(); return; }
+  const keep = $("#mg-to").value;
+  $("#mg-to").innerHTML = '<option value="User:' + a.user_id + '">@' + esc(a.username) + " (you)</option>" +
+    a.groups.map((g) => '<option value="Group:' + g.id + '">' + esc(g.name) + "</option>").join("");
+  if ([...$("#mg-to").options].some((o) => o.value === keep)) $("#mg-to").value = keep;
   renderMigrate();
 }
-$("#mg-acc").onchange = fillCreators;
-$("#mg-from").onchange = () => renderMigrate();
+$("#mg-acc").onchange = fillTargets;
 $("#mg-to").onchange = () => renderMigrate();
 document.querySelectorAll("#mg-mode button").forEach((b) => {
   b.onclick = () => { mgMode = b.dataset.m; document.querySelectorAll("#mg-mode button").forEach((x) => x.classList.toggle("on", x === b)); };
 });
 async function pollMigrate() {
+  pollStudio();
   const res = await api("/api/migrate/job");
   if (!res.ok) return;
-  const fresh = !mgJob || mgJob.place !== res.data.place || mgJob.items.length !== res.data.items.length || mgJob.checked !== res.data.checked;
+  const fresh = !mgJob || mgJob.place !== res.data.place || mgJob.items.length !== res.data.items.length;
   mgJob = res.data;
-  if (fresh && mgTargets.length) fillCreators(); else renderMigrate();
+  if (fresh && mgJob.items.length) {
+    post("/api/bulk/preview", { ids: mgJob.items.map((it) => String(it.id)) }).then((p) => {
+      if (p.ok) { p.data.forEach((x) => { if (x.thumb) mgThumbs[x.id] = x.thumb; }); renderMigrate(); }
+    });
+  }
+  renderMigrate();
+}
+function mgPicked() {
+  const yours = mgYours(), to = $("#mg-to").value;
+  return (mgJob ? mgJob.items : []).filter((it) => it.kind && !mgKindsOff.has(it.kind) && yours.has(it.owner) && it.owner !== to && it.state !== "ok");
 }
 function renderMigrate() {
   const j = mgJob;
-  if (!j || !j.items.length) {
-    $("#mg-source").innerHTML = "Nothing from Studio yet. Open the rbxyoinker plugin in your place and click <b>Scan place</b>.";
-    $("#mg-kinds").innerHTML = ""; $("#mg-other").textContent = ""; $("#mg-rows").innerHTML = ""; $("#mg-counts").innerHTML = "";
-    $("#mg-start").disabled = true; $("#mg-copy").disabled = true; return;
-  }
-  const from = $("#mg-from").value;
-  $("#mg-source").innerHTML = "From Studio: <b>" + esc(j.place || "your place") + "</b>, " + j.items.length + " asset ids" + (j.checked ? "" : ' <span class="spinner"></span> reading them');
-  const mine = j.items.filter((it) => it.kind && it.owner === from);
+  $("#mg-card").style.display = j && j.items.length ? "" : "none";
+  if (!j || !j.items.length) return;
+  const yours = mgYours();
+  $("#mg-title").textContent = j.place || "Assets from Studio";
+  const movable = j.items.filter((it) => it.kind && yours.has(it.owner));
+  $("#mg-source").innerHTML = j.items.length + " asset ids from Studio" + (j.checked
+    ? ", " + movable.length + " can be moved. The rest belong to other creators or are types Roblox won't take, so they stay as they are."
+    : ' <span class="spinner"></span> reading them');
   const counts = {};
-  mine.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
+  movable.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
   $("#mg-kinds").innerHTML = Object.keys(KIND_NAMES).filter((k) => counts[k]).map((k) =>
     '<button class="chip' + (mgKindsOff.has(k) ? " off" : "") + '" data-k="' + k + '">' + KIND_NAMES[k] + " " + counts[k] + "</button>").join("");
   $("#mg-kinds").querySelectorAll(".chip").forEach((c) => {
     c.onclick = () => { const k = c.dataset.k; mgKindsOff.has(k) ? mgKindsOff.delete(k) : mgKindsOff.add(k); renderMigrate(); };
   });
-  const other = j.items.length - mine.length;
-  $("#mg-other").textContent = j.checked && other ? other + " other ids weren't made by this creator, or can't be moved (models, plugins and so on), so they stay as they are." : "";
-  const picked = mine.filter((it) => !mgKindsOff.has(it.kind) && it.state !== "ok");
+  const picked = mgPicked();
   $("#mg-audio").style.display = picked.some((it) => it.kind === "Audio") ? "" : "none";
-  const shown = j.items.filter((it) => it.state !== "found");
+  const moved = j.items.filter((it) => it.state !== "found");
   const c = { ok: 0, error: 0 };
-  shown.forEach((it) => { if (c[it.state] != null) c[it.state]++; });
+  moved.forEach((it) => { if (c[it.state] != null) c[it.state]++; });
   const done = c.ok + c.error;
-  $("#mg-bar").style.width = (shown.length ? (done / shown.length) * 100 : 0) + "%";
-  $("#mg-counts").innerHTML = shown.length ? "<span><b>" + done + "</b> / " + shown.length + " done</span><span><b>" + c.ok + "</b> moved</span><span><b>" + c.error + "</b> failed</span>" : "";
-  $("#mg-rows").innerHTML = shown.map((it) =>
-    '<div class="row"><div class="main"><div class="t">' + esc(it.name || "asset") + " <span>#" + it.id + "</span>" +
-    (it.new_id ? '<span class="arrow">&rarr;</span><span style="color:rgb(59,186,87)">#' + it.new_id + "</span>" : "") + "</div>" +
-    (it.error ? '<div class="s err">' + esc(it.error) + "</div>" : '<div class="s">' + esc(it.type_label || it.kind) + "</div>") +
-    '</div><span class="st ' + esc(it.state) + '">' + esc(it.state) + "</span></div>").join("");
-  $("#mg-start").disabled = j.running || !j.checked || !picked.length || from === $("#mg-to").value;
+  $("#mg-bar").style.width = (moved.length ? (done / moved.length) * 100 : 0) + "%";
+  $("#mg-counts").innerHTML = moved.length ? "<span><b>" + done + "</b> / " + moved.length + " done</span><span><b>" + c.ok + "</b> moved</span><span><b>" + c.error + "</b> failed</span>" : "";
+  $("#mg-rows").innerHTML = j.items.map((it) => {
+    const mine = it.kind && yours.has(it.owner);
+    const state = it.state !== "found" ? it.state : !j.checked ? "" : mine ? (mgKindsOff.has(it.kind) ? "off" : "ready") : "stays";
+    return '<div class="row"' + (mine || it.state !== "found" ? "" : ' style="opacity:0.5"') + ">" +
+      (mgThumbs[it.id] ? '<img class="rthumb" loading="lazy" src="' + esc(mgThumbs[it.id]) + '" alt="" />' : '<span class="rthumb"></span>') +
+      '<div class="main"><div class="t">' + esc(it.name || "asset") + " <span>#" + it.id + "</span>" +
+      (it.new_id ? '<span class="arrow">&rarr;</span><span style="color:rgb(59,186,87)">#' + it.new_id + "</span>" : "") + "</div>" +
+      (it.error ? '<div class="s err">' + esc(it.error) + "</div>"
+        : '<div class="s">' + esc(it.type_label || "?") + (it.owner_name ? " · by " + esc(it.owner_name) : "") + "</div>") +
+      "</div>" + (state ? '<span class="st ' + esc(state) + '">' + esc(state) + "</span>" : "") + "</div>";
+  }).join("");
+  $("#mg-start").disabled = j.running || !j.checked || !picked.length;
   setBtn($("#mg-start"), "move", picked.length ? "Move " + picked.length + " asset" + (picked.length > 1 ? "s" : "") : "Move assets");
   $("#mg-cancel").disabled = !j.running;
   $("#mg-copy").disabled = !c.ok;
+  $("#mg-bulk").disabled = !!j.running;
 }
+$("#mg-bulk").onclick = () => {
+  const box = $("#bulk-input");
+  box.value = mgJob.items.map((it) => it.id).join(String.fromCharCode(10));
+  document.querySelector('nav button[data-tab="bulk"]').click();
+  box.dispatchEvent(new Event("input"));
+};
 $("#mg-start").onclick = async () => {
   const a = mgAccount(); if (!a) return;
-  const kinds = Object.keys(KIND_NAMES).filter((k) => !mgKindsOff.has(k));
-  const res = await post("/api/migrate/start", { user_id: a.user_id, from: $("#mg-from").value, to: $("#mg-to").value, kinds, mode: mgMode });
+  const ids = mgPicked().map((it) => String(it.id));
+  const res = await post("/api/migrate/start", { user_id: a.user_id, to: $("#mg-to").value, ids, mode: mgMode });
   if (!res.ok) { showNote($("#mg-note"), "err", esc(res.error)); return; }
   showNote($("#mg-note"), "info", "Moving " + res.data.total + " assets. " +
     (mgMode === "swap" ? "Keep Studio open, the plugin swaps the IDs when this finishes." : "The mapping will be here when it's done."));

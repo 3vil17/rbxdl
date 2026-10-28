@@ -11,6 +11,7 @@ mod roblox;
 mod scan;
 mod server;
 mod store;
+mod studio;
 
 fn main() {
     let rt = match tokio::runtime::Runtime::new() {

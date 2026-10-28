@@ -8,8 +8,8 @@ use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Moves a place's assets from one creator to another the same account
-/// manages. Only assets the source creator made are touched.
+/// Moves a place's assets to a creator the account manages. Only assets made
+/// by that account or one of the groups it manages are touched.
 #[derive(Serialize, Clone, Default)]
 pub struct Item {
     pub id: i64,
@@ -17,6 +17,7 @@ pub struct Item {
     pub kind: String,
     pub type_label: String,
     pub owner: String,
+    pub owner_name: String,
     pub state: String,
     pub new_id: Option<i64>,
     pub decal_id: Option<i64>,
@@ -64,6 +65,10 @@ pub async fn check(rb: Roblox, pool: Pool, job: Shared) {
         };
         details.push(d);
     }
+    let mut owners: Vec<String> = details.iter().flatten().map(|d| format!("{}:{}", d.creator_type, d.creator_id)).collect();
+    owners.sort();
+    owners.dedup();
+    let names = rb.owner_names(&owners).await;
     let mut j = lock(&job);
     for (it, d) in j.items.iter_mut().zip(details) {
         if let Some(d) = d {
@@ -71,6 +76,7 @@ pub async fn check(rb: Roblox, pool: Pool, job: Shared) {
             it.kind = kind_of(d.asset_type_id).to_string();
             it.type_label = convert::type_label(d.asset_type_id).to_string();
             it.owner = format!("{}:{}", d.creator_type, d.creator_id);
+            it.owner_name = names.get(&it.owner).cloned().unwrap_or(d.creator_name);
         }
     }
     j.checked = true;

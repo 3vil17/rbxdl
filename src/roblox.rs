@@ -266,6 +266,37 @@ impl Roblox {
     }
 
     /// Bundles list their parts as items, outfits as assets. Both are public.
+    /// Display names for "Group:1" / "User:2" style owners, looked up in batches.
+    pub async fn owner_names(&self, owners: &[String]) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+        let ids_of = |kind: &str| -> Vec<String> {
+            owners.iter().filter_map(|o| o.strip_prefix(kind)).map(String::from).collect()
+        };
+        for chunk in ids_of("Group:").chunks(100) {
+            let url = format!("https://groups.roblox.com/v2/groups?groupIds={}", chunk.join(","));
+            let Ok(resp) = self.http.get(&url).send().await else { continue };
+            let Ok(v) = resp.json::<Value>().await else { continue };
+            for g in v["data"].as_array().into_iter().flatten() {
+                if let (Some(id), Some(name)) = (g["id"].as_i64(), g["name"].as_str()) {
+                    out.insert(format!("Group:{id}"), name.to_string());
+                }
+            }
+        }
+        let users: Vec<i64> = ids_of("User:").iter().filter_map(|x| x.parse().ok()).collect();
+        for chunk in users.chunks(100) {
+            let Ok(resp) = self.http.post("https://users.roblox.com/v1/users").json(&json!({ "userIds": chunk })).send().await else {
+                continue;
+            };
+            let Ok(v) = resp.json::<Value>().await else { continue };
+            for u in v["data"].as_array().into_iter().flatten() {
+                if let (Some(id), Some(name)) = (u["id"].as_i64(), u["name"].as_str()) {
+                    out.insert(format!("User:{id}"), format!("@{name}"));
+                }
+            }
+        }
+        out
+    }
+
     pub async fn bundle_assets(&self, id: i64) -> Option<(String, Vec<i64>)> {
         let url = format!("https://catalog.roblox.com/v1/bundles/{id}/details");
         let v: Value = self.http.get(&url).send().await.ok()?.json().await.ok()?;

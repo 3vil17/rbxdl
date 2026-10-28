@@ -74,6 +74,7 @@ struct AppState {
     bulk: Arc<Mutex<Bulk>>,
     last_ping: Arc<Mutex<std::time::Instant>>,
     migrate: crate::migrate::Shared,
+    studio: crate::studio::Shared,
 }
 
 #[derive(Default)]
@@ -134,6 +135,7 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         bulk: Arc::default(),
         last_ping: Arc::new(Mutex::new(std::time::Instant::now())),
         migrate: Arc::default(),
+        studio: crate::studio::load(),
     };
     state.pool.reload(&state.rb).await;
 
@@ -159,7 +161,12 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/bulk/clear", post(bulk_clear))
         .route("/api/bulk/retry", post(bulk_retry))
         .route("/api/expand", post(expand))
-        .route("/api/migrate/submit", post(migrate_submit))
+        .route("/api/studio/code", post(studio_code))
+        .route("/api/studio/status", get(studio_status))
+        .route("/api/studio/disconnect", post(studio_disconnect))
+        .route("/api/studio/pair", post(studio_pair))
+        .route("/api/studio/submit", post(studio_submit))
+        .route("/api/studio/job", get(studio_job))
         .route("/api/migrate/job", get(migrate_job))
         .route("/api/migrate/targets", get(migrate_targets))
         .route("/api/migrate/start", post(migrate_start))
@@ -749,14 +756,67 @@ async fn expand(State(st): State<AppState>, Json(body): Json<ExpandBody>) -> Jso
     ok(json!(out))
 }
 
+fn studio_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers.get("x-yoinker-token").and_then(|v| v.to_str().ok()).map(String::from)
+}
+
+fn unpaired() -> axum::response::Response {
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        Json(json!({ "ok": false, "error": "not connected, enter a new code from the Migrate tab" })),
+    )
+        .into_response()
+}
+
+async fn studio_code(State(st): State<AppState>) -> Json<Value> {
+    let code = crate::studio::lock(&st.studio).new_code();
+    ok(json!({ "code": code }))
+}
+
+async fn studio_status(State(st): State<AppState>) -> Json<Value> {
+    let p = crate::studio::lock(&st.studio);
+    let pending = p.pending_code();
+    ok(json!({
+        "connected": p.connected(),
+        "seen_ago": p.last_seen.map(|t| t.elapsed().as_secs()),
+        "place": p.place,
+        "code": pending.as_ref().map(|c| c.0.clone()),
+        "code_left": pending.map(|c| c.1),
+    }))
+}
+
+async fn studio_disconnect(State(st): State<AppState>) -> Json<Value> {
+    crate::studio::lock(&st.studio).disconnect();
+    ok(Value::Null)
+}
+
 #[derive(Deserialize)]
-struct MigrateSubmit {
+struct PairBody {
+    code: String,
+}
+
+async fn studio_pair(State(st): State<AppState>, Json(body): Json<PairBody>) -> Json<Value> {
+    match crate::studio::lock(&st.studio).redeem(&body.code) {
+        Some(token) => ok(json!({ "token": token })),
+        None => fail("that code is wrong or expired, make a new one in the Migrate tab"),
+    }
+}
+
+#[derive(Deserialize)]
+struct StudioSubmit {
     #[serde(default)]
     place: String,
     ids: Vec<String>,
 }
 
-async fn migrate_submit(State(st): State<AppState>, Json(body): Json<MigrateSubmit>) -> Json<Value> {
+async fn studio_submit(
+    State(st): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<StudioSubmit>,
+) -> axum::response::Response {
+    if !crate::studio::lock(&st.studio).check(studio_token(&headers).as_deref()) {
+        return unpaired();
+    }
     let mut ids: Vec<i64> = Vec::new();
     for raw in &body.ids {
         if let Ok(id) = raw.trim().parse::<i64>() {
@@ -765,14 +825,15 @@ async fn migrate_submit(State(st): State<AppState>, Json(body): Json<MigrateSubm
             }
         }
     }
-    {
+    let place: String = body.place.chars().take(100).collect();
+    let run_id = {
         let mut j = crate::migrate::lock(&st.migrate);
         if j.running {
-            return fail("a migration is running, wait for it or cancel it in the app");
+            return fail("a migration is running, wait for it or cancel it in the app").into_response();
         }
         let run_id = j.run_id;
         *j = crate::migrate::Job {
-            place: body.place.chars().take(100).collect(),
+            place: place.clone(),
             run_id,
             items: ids
                 .iter()
@@ -780,34 +841,39 @@ async fn migrate_submit(State(st): State<AppState>, Json(body): Json<MigrateSubm
                 .collect(),
             ..Default::default()
         };
-    }
-    let run_id = crate::migrate::lock(&st.migrate).run_id;
+        run_id
+    };
+    crate::studio::lock(&st.studio).place = place;
     tokio::spawn(crate::migrate::check(st.rb.clone(), st.pool.clone(), st.migrate.clone()));
-    ok(json!({ "count": ids.len(), "run_id": run_id }))
+    ok(json!({ "count": ids.len(), "run_id": run_id })).into_response()
+}
+
+async fn studio_job(State(st): State<AppState>, headers: axum::http::HeaderMap) -> axum::response::Response {
+    if !crate::studio::lock(&st.studio).check(studio_token(&headers).as_deref()) {
+        return unpaired();
+    }
+    ok(json!(*crate::migrate::lock(&st.migrate))).into_response()
 }
 
 async fn migrate_job(State(st): State<AppState>) -> Json<Value> {
     ok(json!(*crate::migrate::lock(&st.migrate)))
 }
 
+/// Each signed in account with the creators it can upload to: itself and
+/// every group it manages. Assets only move between these.
 async fn migrate_targets(State(st): State<AppState>) -> Json<Value> {
     let mut out = Vec::new();
     for (uid, username, avatar) in st.pool.alive_users() {
         let Some(cookie) = st.pool.cookie_for_user(uid) else { continue };
         let manage = st.rb.manageable_groups(&cookie).await.unwrap_or_default();
-        let groups = st.rb.user_groups(uid).await;
+        let groups: Vec<_> = st.rb.user_groups(uid).await.into_iter().filter(|g| manage.contains(&g.id)).collect();
         let ids: Vec<i64> = groups.iter().map(|g| g.id).collect();
         let icons = st.rb.group_icons(&ids).await;
         out.push(json!({
             "user_id": uid,
             "username": username,
             "avatar": avatar,
-            "groups": groups.iter().map(|g| json!({
-                "id": g.id,
-                "name": g.name,
-                "icon": icons.get(&g.id),
-                "manage": manage.contains(&g.id),
-            })).collect::<Vec<_>>(),
+            "groups": groups.iter().map(|g| json!({ "id": g.id, "name": g.name, "icon": icons.get(&g.id) })).collect::<Vec<_>>(),
         }));
     }
     ok(json!(out))
@@ -816,9 +882,8 @@ async fn migrate_targets(State(st): State<AppState>) -> Json<Value> {
 #[derive(Deserialize)]
 struct MigrateStart {
     user_id: i64,
-    from: String,
     to: String,
-    kinds: Vec<String>,
+    ids: Vec<String>,
     mode: String,
 }
 
@@ -836,22 +901,18 @@ async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart
     let Some(cookie) = st.pool.cookie_for_user(body.user_id) else {
         return fail("that account isn't signed in anymore, recheck it in Accounts");
     };
-    let (Some(from), Some(to)) = (parse_creator(&body.from), parse_creator(&body.to)) else {
-        return fail("pick where the assets come from and where they go");
+    let Some(to) = parse_creator(&body.to) else {
+        return fail("pick where the assets should go");
     };
-    if body.from == body.to {
-        return fail("from and to are the same");
-    }
     let Some(manage) = st.rb.manageable_groups(&cookie).await else {
         return fail("couldn't check which groups this account manages, try again");
     };
-    let allowed = |c: &crate::roblox::Creator| match c {
-        crate::roblox::Creator::User(id) => *id == body.user_id,
-        crate::roblox::Creator::Group(id) => manage.contains(id),
-    };
-    if !allowed(&from) || !allowed(&to) {
-        return fail("this account has to manage both groups (or be the account itself) to move assets between them");
+    let mut yours: Vec<String> = manage.iter().map(|g| format!("Group:{g}")).collect();
+    yours.push(format!("User:{}", body.user_id));
+    if !yours.contains(&body.to) {
+        return fail("this account can't upload to that group");
     }
+    let wanted: Vec<i64> = body.ids.iter().filter_map(|x| x.parse().ok()).collect();
     let todo: Vec<usize> = {
         let mut j = crate::migrate::lock(&st.migrate);
         if j.running {
@@ -864,11 +925,17 @@ async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart
             .items
             .iter()
             .enumerate()
-            .filter(|(_, it)| it.owner == body.from && body.kinds.contains(&it.kind) && it.state != "ok")
+            .filter(|(_, it)| {
+                wanted.contains(&it.id)
+                    && !it.kind.is_empty()
+                    && it.state != "ok"
+                    && it.owner != body.to
+                    && yours.contains(&it.owner)
+            })
             .map(|(i, _)| i)
             .collect();
         if todo.is_empty() {
-            return fail("nothing to move, none of the picked types were made by that group");
+            return fail("nothing to move. Only assets made by you or a group you manage can be moved");
         }
         for &i in &todo {
             j.items[i].state = "queued".into();
