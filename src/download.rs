@@ -1,6 +1,7 @@
 use crate::convert;
 use crate::error::Result;
 use crate::resolver;
+use crate::pool::Pool;
 use crate::roblox::Roblox;
 use crate::store;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +12,7 @@ pub struct DownloadInfo {
     pub type_label: String,
     pub method: String,
     pub place_id: Option<i64>,
+    pub account: Option<String>,
     pub path: String,
 }
 
@@ -35,7 +37,7 @@ fn sanitize(name: &str) -> String {
 pub async fn fetch_and_save(
     rb: &Roblox,
     api_key: Option<&str>,
-    cookie: Option<&str>,
+    pool: &Pool,
     id: i64,
     save_dir: &str,
 ) -> Result<DownloadInfo> {
@@ -45,12 +47,12 @@ pub async fn fetch_and_save(
         None => (format!("asset_{id}"), 0, None),
     };
 
-    let mut attempt = resolver::resolve(rb, api_key, cookie, id, creator).await?;
+    let mut attempt = resolver::resolve(rb, api_key, pool, id, creator).await?;
 
     let mut atype = atype0;
     if let Some(inner) = convert::inner_asset_id(&attempt.bytes) {
         if inner != id {
-            if let Ok(a2) = resolver::resolve(rb, api_key, cookie, inner, None).await {
+            if let Ok(a2) = resolver::resolve(rb, api_key, pool, inner, None).await {
                 attempt.bytes = a2.bytes;
                 attempt.method = format!("{} (decal \u{2192} {})", attempt.method, inner);
                 atype = 1;
@@ -77,5 +79,13 @@ pub async fn fetch_and_save(
         when: now_millis(),
     });
 
-    Ok(DownloadInfo { id, name, type_label, method: attempt.method, place_id: attempt.place_id, path })
+    Ok(DownloadInfo {
+        id,
+        name,
+        type_label,
+        method: attempt.method,
+        place_id: attempt.place_id,
+        account: attempt.account,
+        path,
+    })
 }

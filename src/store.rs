@@ -27,6 +27,37 @@ pub fn clear_secret(key: &str) -> Result<()> {
     }
 }
 
+const MAX_COOKIES: usize = 50;
+
+fn cookie_key(i: usize) -> String {
+    if i == 0 { "cookie".into() } else { format!("cookie_{}", i + 1) }
+}
+
+/// Cookies live in separate credential entries since each one is near the
+/// Credential Manager size cap. The first keeps the old `cookie` name.
+pub fn load_cookies() -> Vec<String> {
+    let mut out = Vec::new();
+    for i in 0..MAX_COOKIES {
+        match get_secret(&cookie_key(i)) {
+            Some(c) => out.push(c),
+            None => break,
+        }
+    }
+    out
+}
+
+pub fn save_cookies(list: &[String]) -> Result<()> {
+    for i in 0..MAX_COOKIES {
+        clear_secret(&cookie_key(i))?;
+    }
+    for (i, c) in list.iter().take(MAX_COOKIES).enumerate() {
+        save_secret(&cookie_key(i), c)?;
+    }
+    Ok(())
+}
+
+static HISTORY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn config_dir() -> PathBuf {
     let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("rbxdl");
@@ -85,6 +116,7 @@ pub fn load_history() -> Vec<HistoryEntry> {
 }
 
 pub fn push_history(entry: HistoryEntry) -> Result<()> {
+    let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load_history();
     all.insert(0, entry);
     all.truncate(200);

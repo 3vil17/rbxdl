@@ -159,13 +159,13 @@ impl Roblox {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(Error::NotAuthorized);
+            return Err(error_from(resp).await);
         }
         let v: Value = resp.json().await?;
         let location = v["location"]
             .as_str()
             .or_else(|| v["locations"][0]["location"].as_str())
-            .ok_or(Error::NotAuthorized)?;
+            .ok_or_else(|| Error::Denied(message_of(&v).unwrap_or_else(|| "no download location returned".into())))?;
         let bytes = self.http.get(location).send().await?.bytes().await?;
         Ok(bytes.to_vec())
     }
@@ -188,7 +188,7 @@ impl Roblox {
         }
         let resp = req.send().await?;
         if !resp.status().is_success() {
-            return Err(Error::NotAuthorized);
+            return Err(error_from(resp).await);
         }
         let ct = resp
             .headers()
@@ -201,13 +201,47 @@ impl Roblox {
         if ct.contains("json") || bytes.starts_with(b"{\"errors\"") {
             if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
                 if v.get("errors").is_some() {
-                    return Err(Error::NotAuthorized);
+                    return Err(Error::Denied(message_of(&v).unwrap_or_else(|| "unknown error".into())));
                 }
             }
         }
         if bytes.is_empty() {
-            return Err(Error::NotAuthorized);
+            return Err(Error::Denied("empty response".into()));
         }
         Ok(bytes)
+    }
+}
+
+fn message_of(v: &Value) -> Option<String> {
+    let e = &v["errors"][0];
+    e["message"]
+        .as_str()
+        .or_else(|| e["detail"].as_str())
+        .or_else(|| v["message"].as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Turn a failed Roblox response into a readable error, keeping the status and
+/// Roblox's own message. 429 becomes `RateLimited` with the Retry-After value.
+async fn error_from(resp: reqwest::Response) -> Error {
+    let status = resp.status().as_u16();
+    let retry = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    if status == 429 {
+        return Error::RateLimited(retry);
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let msg = serde_json::from_str::<Value>(&body).ok().and_then(|v| message_of(&v));
+    match (status, msg) {
+        (401, _) => Error::Denied("401 cookie is expired or invalid".into()),
+        (s, Some(m)) => Error::Denied(format!("{s} {m}")),
+        (403, None) => Error::Denied("403 forbidden".into()),
+        (404, None) => Error::Denied("404 asset not found".into()),
+        (s, None) => Error::Denied(format!("{s} no message from Roblox")),
     }
 }

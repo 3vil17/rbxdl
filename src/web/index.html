@@ -88,6 +88,37 @@
 
   .sep { height: 1px; background: var(--card-border); margin: 16px 0; }
 
+  nav button { display: inline-flex; align-items: center; gap: 6px; }
+  nav button svg, h2.sect svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  h2.sect { display: flex; align-items: center; gap: 7px; }
+  .btn svg { stroke-linecap: round; stroke-linejoin: round; }
+  textarea {
+    background: rgb(22, 22, 22); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 6px;
+    color: rgb(224, 224, 224); font-family: monospace; font-size: 12px; padding: 8px 12px; outline: none;
+    width: 100%; min-height: 110px; resize: vertical; transition: border-color 0.2s, background 0.2s;
+  }
+  textarea:hover { border-color: rgba(255, 255, 255, 0.2); }
+  textarea:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
+  textarea::placeholder { color: rgb(85, 85, 85); }
+  .note .line { display: block; }
+  .bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; margin-top: 14px; }
+  .bar div { height: 100%; width: 0; background: var(--green); transition: width 0.3s; }
+  .counts { display: flex; gap: 14px; font-size: 0.75rem; color: rgb(136,136,136); margin-top: 8px; flex-wrap: wrap; }
+  .counts b { color: rgb(224,224,224); font-weight: 500; }
+  .rows { max-height: 460px; overflow-y: auto; margin-top: 10px; scrollbar-width: thin; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--card-border); font-size: 0.78rem; }
+  .row:last-child { border-bottom: none; }
+  .row .main { flex: 1; min-width: 0; }
+  .row .t { color: rgb(224,224,224); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .t span { color: rgb(102,102,102); }
+  .row .s { color: rgb(136,136,136); font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .s.err { color: rgb(208, 96, 112); white-space: normal; }
+  .st { font-size: 0.63rem; font-family: monospace; padding: 2px 8px; border-radius: 99px; background: rgba(255,255,255,0.05); color: rgb(136,136,136); flex-shrink: 0; }
+  .st.ok { background: rgba(59,234,87,0.1); color: rgb(59,186,87); }
+  .st.error { background: rgba(236,59,71,0.12); color: rgb(208,96,112); }
+  .st.working, .st.waiting { color: rgb(212,212,212); }
+  .row .btn { padding: 4px 9px; font-size: 12px; }
+
   input[type="text"], input[type="password"] {
     background: rgb(22, 22, 22); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 6px;
     color: rgb(224, 224, 224); font-family: var(--font-sans); font-size: 13px; font-weight: 400;
@@ -181,9 +212,11 @@
         </p>
       </div>
       <nav>
-        <button data-tab="download" class="active">Download</button>
-        <button data-tab="settings">Settings</button>
-        <button data-tab="history">History</button>
+        <button data-tab="download" class="active" data-i="download">Download</button>
+        <button data-tab="bulk" data-i="layers">Bulk</button>
+        <button data-tab="accounts" data-i="users">Accounts</button>
+        <button data-tab="settings" data-i="settings">Settings</button>
+        <button data-tab="history" data-i="history">History</button>
       </nav>
     </div>
 
@@ -195,7 +228,7 @@
           <div class="frow">
             <input id="asset-input" type="text" placeholder="1818 or a roblox.com asset link"
                    autocomplete="off" spellcheck="false" />
-            <button class="btn" id="fetch-btn">Fetch</button>
+            <button class="btn" id="fetch-btn" data-i="search">Fetch</button>
           </div>
         </div>
         <p class="hint">Paste an id or any catalog / library / create URL.</p>
@@ -211,10 +244,7 @@
             </div>
           </div>
           <div class="fbtns">
-            <button class="btn" id="download-btn">
-              <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              Download
-            </button>
+            <button class="btn" id="download-btn" data-i="download">Download</button>
           </div>
         </div>
 
@@ -225,38 +255,68 @@
         <h2 class="sect">Usage</h2>
         <ul>
           <li>Enter an <strong>asset id</strong> or paste any Roblox URL, then <strong>Fetch</strong> to preview it.</li>
-          <li><strong>Download</strong> walks the authorization ladder: Open Cloud key, then direct cookie, then the creator's own places as a place-id context.</li>
+          <li><strong>Download</strong> walks the authorization ladder: Open Cloud key, then each saved account directly, then the creator's own places as a place-id context.</li>
+          <li><strong>Bulk</strong> takes up to 500 ids at once. Requests rotate across your accounts and back off when Roblox rate limits one.</li>
           <li>Files save to your download folder (set in <strong>Settings</strong>); every download is kept in <strong>History</strong>.</li>
           <li>Decals and images that resolve to an XML descriptor are followed once to the real image.</li>
         </ul>
       </div>
     </section>
 
+    <!-- BULK -->
+    <section id="tab-bulk" style="display:none; flex-direction:column; gap:10px;">
+      <div class="card">
+        <h2 class="sect"><i data-i="layers"></i>Bulk download</h2>
+        <textarea id="bulk-input" spellcheck="false" placeholder="ids or links, separated by spaces, commas or new lines (max 500)"></textarea>
+        <div class="counts"><span><b id="bulk-count">0</b> / 500 ids</span></div>
+        <div class="fbtns">
+          <button class="btn" id="bulk-start" data-i="download">Download all</button>
+          <button class="btn" id="bulk-cancel" data-i="square" disabled>Cancel</button>
+        </div>
+        <div class="bar"><div id="bulk-bar"></div></div>
+        <div class="counts" id="bulk-counts"></div>
+        <div class="note" id="bulk-note"></div>
+        <div class="rows" id="bulk-rows"></div>
+      </div>
+    </section>
+
+    <!-- ACCOUNTS -->
+    <section id="tab-accounts" style="display:none; flex-direction:column; gap:10px;">
+      <div class="card">
+        <div class="section-head">
+          <h2 class="sect" style="margin:0"><i data-i="users"></i>Accounts in use</h2>
+          <button class="btn" id="acc-refresh" data-i="refresh">Recheck</button>
+        </div>
+        <div class="rows" id="acc-list"><div class="empty">Loading…</div></div>
+        <p class="hint">Cookie requests rotate round-robin across live accounts, at most one request per account every 350 ms. A 429 cools that account down for Roblox's Retry-After, or 5s doubling up to 120s.</p>
+      </div>
+    </section>
+
     <!-- SETTINGS -->
     <section id="tab-settings" style="display:none; flex-direction:column; gap:10px;">
       <div class="card">
-        <h2 class="sect">Credentials</h2>
+        <h2 class="sect"><i data-i="key"></i>Credentials</h2>
         <div class="fgrid">
           <label>API key</label>
           <div class="frow"><input id="api-key" type="password" placeholder="Open Cloud key" autocomplete="off" /></div>
-          <label>Cookie</label>
-          <div class="frow"><input id="cookie" type="password" placeholder=".ROBLOSECURITY" autocomplete="off" /></div>
         </div>
+        <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:12px 0 6px;">Cookies <span id="cookie-count"></span></label>
+        <textarea id="cookies" spellcheck="false" autocomplete="off" placeholder=".ROBLOSECURITY values, one per line"></textarea>
         <div class="fbtns">
-          <button class="btn" id="save-creds">Save credentials</button>
-          <button class="btn" id="check-cookie">Check cookie</button>
+          <button class="btn" id="save-creds" data-i="save">Save credentials</button>
+          <button class="btn" id="clear-cookies" data-i="trash">Remove all cookies</button>
         </div>
-        <p class="hint">API key scope <code>legacy-asset:manage</code>. Leave a field blank to keep its current value.</p>
+        <p class="hint">API key scope <code>legacy-asset:manage</code>. Leave a field blank to keep what's saved. Saving cookies replaces the whole list.</p>
         <div class="note" id="cookie-note"></div>
       </div>
 
       <div class="card">
-        <h2 class="sect">Download folder</h2>
+        <h2 class="sect"><i data-i="folder"></i>Download folder</h2>
         <div class="fgrid">
           <label>Save to</label>
           <div class="frow">
             <input id="save-dir" type="text" placeholder="save folder" autocomplete="off" spellcheck="false" />
-            <button class="btn" id="save-dir-btn">Save</button>
+            <button class="btn" id="save-dir-btn" data-i="save">Save</button>
           </div>
         </div>
         <div class="note" id="settings-note"></div>
@@ -267,8 +327,8 @@
     <section id="tab-history" style="display:none;">
       <div class="card">
         <div class="section-head">
-          <h2 class="sect" style="margin:0">Recent downloads</h2>
-          <button class="btn" id="clear-hist">Clear</button>
+          <h2 class="sect" style="margin:0"><i data-i="history"></i>Recent downloads</h2>
+          <button class="btn" id="clear-hist" data-i="trash">Clear</button>
         </div>
         <div id="hist-list" style="margin-top:12px"><div class="empty">Loading…</div></div>
       </div>
@@ -287,14 +347,41 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// Lucide icons (ISC license), inlined
+const ICONS = {
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
+  folder: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+};
+const svg = (n) => '<svg viewBox="0 0 24 24">' + (ICONS[n] || "") + "</svg>";
+function setBtn(el, icon, text) { el.innerHTML = (icon ? svg(icon) : "") + " " + esc(text); }
+document.querySelectorAll("[data-i]").forEach((el) => {
+  if (el.tagName === "I") el.outerHTML = svg(el.dataset.i);
+  else el.insertAdjacentHTML("afterbegin", svg(el.dataset.i));
+});
+// Roblox failure details come back joined by " | ", one line per step
+function errHtml(msg) { return String(msg || "").split(" | ").map((l) => '<span class="line">' + esc(l) + "</span>").join(""); }
+
+let accTimer = null;
 document.querySelectorAll("nav button").forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     const tab = b.dataset.tab;
-    ["download", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
+    ["download", "bulk", "accounts", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
+    clearInterval(accTimer);
     if (tab === "settings") loadSettings();
     if (tab === "history") loadHistory();
+    if (tab === "accounts") { loadAccounts(); accTimer = setInterval(loadAccounts, 2000); }
   };
 });
 
@@ -303,10 +390,10 @@ let current = null;
 async function doFetch() {
   const raw = $("#asset-input").value.trim();
   if (!raw) return;
-  const btn = $("#fetch-btn"); btn.disabled = true; btn.textContent = "…";
+  const btn = $("#fetch-btn"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetch';
   hideNote($("#dl-note")); $("#result").style.display = "none";
   const res = await api("/api/lookup?id=" + encodeURIComponent(raw));
-  btn.disabled = false; btn.textContent = "Fetch";
+  btn.disabled = false; setBtn(btn, "search", "Fetch");
   if (!res.ok) { showNote($("#dl-note"), "err", esc(res.error)); return; }
   current = res.data;
   $("#r-name").textContent = res.data.name;
@@ -323,12 +410,12 @@ async function doDownload() {
   showNote($("#dl-note"), "info", "Walking the authorization ladder…");
   const res = await post("/api/download", { id: String(current.id) });
   btn.disabled = false;
-  btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download';
-  if (!res.ok) { showNote($("#dl-note"), "err", esc(res.error)); return; }
+  setBtn(btn, "download", "Download");
+  if (!res.ok) { showNote($("#dl-note"), "err", errHtml(res.error)); return; }
   const d = res.data;
   showNote($("#dl-note"), "ok",
     "Saved <b>" + esc(d.name) + "</b> via <b>" + esc(d.method) + "</b><br><code>" + esc(d.path) + "</code>" +
-    '<div class="acts"><button class="btn" id="reveal-btn">Show in folder</button></div>');
+    '<div class="acts"><button class="btn" id="reveal-btn">' + svg("folder") + ' Show in folder</button></div>');
   const rb = $("#reveal-btn"); if (rb) rb.onclick = () => post("/api/reveal", { path: d.path });
 }
 $("#fetch-btn").onclick = doFetch;
@@ -340,24 +427,78 @@ async function loadSettings() {
   const res = await api("/api/settings"); if (!res.ok) return;
   $("#save-dir").value = res.data.save_dir;
   $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
-  $("#cookie").placeholder = res.data.has_cookie ? "saved, blank keeps it" : ".ROBLOSECURITY";
+  $("#cookie-count").textContent = res.data.cookie_count ? "(" + res.data.cookie_count + " saved)" : "";
+  $("#cookies").placeholder = res.data.cookie_count ? "saved, blank keeps them. Paste a new list to replace" : ".ROBLOSECURITY values, one per line";
 }
-$("#save-creds").onclick = async () => {
-  const body = {}; const k = $("#api-key").value, c = $("#cookie").value;
-  if (k !== "") body.api_key = k; if (c !== "") body.cookie = c;
+async function saveCreds(body) {
+  showNote($("#cookie-note"), "info", "Saving and checking accounts…");
   const res = await post("/api/credentials", body);
   if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
-  $("#api-key").value = ""; $("#cookie").value = "";
-  showNote($("#cookie-note"), "ok", "Credentials saved."); loadSettings();
+  $("#api-key").value = ""; $("#cookies").value = "";
+  const acc = await api("/api/accounts");
+  const live = acc.ok ? acc.data.filter((a) => a.alive).length : 0;
+  showNote($("#cookie-note"), "ok", "Saved. " + res.data.cookie_count + " cookie(s), " + live + " alive. See <b>Accounts</b>.");
+  loadSettings();
+}
+$("#save-creds").onclick = () => {
+  const body = {}; const k = $("#api-key").value, c = $("#cookies").value.trim();
+  if (k !== "") body.api_key = k; if (c !== "") body.cookies = c;
+  saveCreds(body);
 };
-$("#check-cookie").onclick = async () => {
-  showNote($("#cookie-note"), "info", "Checking…");
-  const res = await api("/api/cookie-info");
-  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
-  const d = res.data;
-  if (!d.alive) showNote($("#cookie-note"), "err", '<span class="dot off"></span>' + esc(d.reason || "cookie is not valid"));
-  else showNote($("#cookie-note"), "ok", '<span class="dot on"></span>Alive as <b>' + esc(d.display_name || d.username) + "</b> (@" + esc(d.username) + ")" + (d.robux != null ? ", " + d.robux + " Robux" : ""));
+$("#clear-cookies").onclick = () => { if (confirm("Remove all saved cookies?")) saveCreds({ cookies: "" }); };
+
+// ---- Accounts ----
+async function loadAccounts(recheck) {
+  const res = recheck ? await post("/api/accounts/refresh", {}) : await api("/api/accounts");
+  const list = $("#acc-list");
+  if (!res.ok || !res.data.length) { list.innerHTML = '<div class="empty">No cookies saved. Add them in Settings.</div>'; return; }
+  list.innerHTML = res.data.map((a) => {
+    const state = !a.alive ? '<span class="st error">dead</span>' : a.cooling ? '<span class="st working">cooling ' + a.cooling + "s</span>" : '<span class="st ok">ready</span>';
+    return '<div class="row"><span class="dot ' + (a.alive ? "on" : "off") + '"></span><div class="main">' +
+      '<div class="t">' + (a.username ? "@" + esc(a.username) : "unknown") + (a.user_id ? " <span>#" + a.user_id + "</span>" : "") + "</div>" +
+      '<div class="s">' + a.uses + " requests · " + a.limited + " rate limits" + (a.last_error ? " · " + esc(a.last_error) : "") + "</div>" +
+      "</div>" + state + "</div>";
+  }).join("");
+}
+$("#acc-refresh").onclick = () => loadAccounts(true);
+
+// ---- Bulk ----
+function splitIds(text) { return text.split(/[\s,;]+/).map((s) => (s.match(/\d+/g) || []).sort((a, b) => b.length - a.length)[0]).filter(Boolean); }
+$("#bulk-input").addEventListener("input", () => {
+  const n = new Set(splitIds($("#bulk-input").value)).size;
+  $("#bulk-count").textContent = n; $("#bulk-count").style.color = n > 500 ? "var(--red)" : "";
+});
+let bulkTimer = null;
+function renderBulk(d) {
+  const it = d.items, c = { ok: 0, error: 0, skipped: 0, waiting: 0 };
+  it.forEach((x) => { if (c[x.state] != null) c[x.state]++; });
+  const done = c.ok + c.error + c.skipped;
+  $("#bulk-bar").style.width = (it.length ? (done / it.length) * 100 : 0) + "%";
+  $("#bulk-counts").innerHTML = "<span><b>" + done + "</b> / " + it.length + " done</span><span><b>" + c.ok + "</b> saved</span><span><b>" + c.error + "</b> failed</span>" +
+    (c.waiting ? "<span><b>" + c.waiting + "</b> waiting on rate limit</span>" : "") + (c.skipped ? "<span><b>" + c.skipped + "</b> skipped</span>" : "");
+  $("#bulk-rows").innerHTML = it.map((x, i) =>
+    '<div class="row"><div class="main"><div class="t">' + esc(x.name || "asset") + " <span>#" + x.id + "</span></div>" +
+    (x.error ? '<div class="s err">' + errHtml(x.error) + "</div>" : x.method ? '<div class="s">' + esc(x.method) + "</div>" : "") +
+    '</div><span class="st ' + x.state + '">' + x.state + "</span>" +
+    (x.path ? '<button class="btn" data-p="' + i + '">' + svg("folder") + "</button>" : "") + "</div>").join("");
+  $("#bulk-rows").querySelectorAll("button[data-p]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: it[b.dataset.p].path }); });
+  $("#bulk-start").disabled = d.running; $("#bulk-cancel").disabled = !d.running;
+}
+async function pollBulk() {
+  const res = await api("/api/bulk/status"); if (!res.ok) return;
+  renderBulk(res.data);
+  if (!res.data.running) { clearInterval(bulkTimer); bulkTimer = null; }
+}
+$("#bulk-start").onclick = async () => {
+  const ids = splitIds($("#bulk-input").value);
+  hideNote($("#bulk-note"));
+  const res = await post("/api/bulk", { ids });
+  if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
+  showNote($("#bulk-note"), "info", "Started " + res.data.total + " assets with " + res.data.workers + " workers.");
+  pollBulk(); if (!bulkTimer) bulkTimer = setInterval(pollBulk, 1000);
 };
+$("#bulk-cancel").onclick = () => post("/api/bulk/cancel", {});
+pollBulk().then(() => { if ($("#bulk-cancel").disabled === false && !bulkTimer) bulkTimer = setInterval(pollBulk, 1000); });
 $("#save-dir-btn").onclick = async () => {
   const res = await post("/api/settings", { save_dir: $("#save-dir").value });
   if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }

@@ -9,7 +9,7 @@ repository = "https://github.com/3vil17/rbxdl"
 [dependencies]
 axum = "0.7"
 reqwest = { version = "0.12", features = ["json", "gzip"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 keyring = { version = "3", features = ["windows-native"] }

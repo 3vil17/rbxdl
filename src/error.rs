@@ -12,8 +12,10 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("no credentials saved, add an API key or a cookie in Settings")]
     NoCredentials,
-    #[error("asset is not accessible with the current credentials")]
-    NotAuthorized,
+    #[error("{0}")]
+    Denied(String),
+    #[error("rate limited by Roblox, every account is cooling down (retry after {0}s)")]
+    RateLimited(u64),
     #[error("{0}")]
     Other(String),
 }

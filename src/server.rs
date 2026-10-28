@@ -1,4 +1,6 @@
 use crate::download;
+use crate::error::Error;
+use crate::pool::Pool;
 use crate::roblox::Roblox;
 use crate::store;
 use axum::{
@@ -8,16 +10,41 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+const BULK_MAX: usize = 500;
 
 #[derive(Clone)]
 struct AppState {
     rb: Roblox,
+    pool: Pool,
+    bulk: Arc<Mutex<Bulk>>,
+}
+
+#[derive(Default)]
+struct Bulk {
+    running: bool,
+    cancel: bool,
+    items: Vec<BulkItem>,
+}
+
+#[derive(Serialize, Clone, Default)]
+struct BulkItem {
+    id: i64,
+    state: &'static str,
+    name: Option<String>,
+    method: Option<String>,
+    account: Option<String>,
+    path: Option<String>,
+    error: Option<String>,
 }
 
 pub async fn run() -> std::io::Result<()> {
-    let state = AppState { rb: Roblox::new() };
+    let state = AppState { rb: Roblox::new(), pool: Pool::default(), bulk: Arc::default() };
+    state.pool.reload(&state.rb).await;
 
     let app = Router::new()
         .route("/", get(index))
@@ -26,7 +53,11 @@ pub async fn run() -> std::io::Result<()> {
         .route("/api/download", post(download_asset))
         .route("/api/settings", get(get_settings).post(set_settings))
         .route("/api/credentials", post(set_credentials))
-        .route("/api/cookie-info", get(cookie_info))
+        .route("/api/accounts", get(accounts))
+        .route("/api/accounts/refresh", post(refresh_accounts))
+        .route("/api/bulk", post(bulk_start))
+        .route("/api/bulk/status", get(bulk_status))
+        .route("/api/bulk/cancel", post(bulk_cancel))
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
         .route("/api/reveal", post(reveal))
@@ -131,11 +162,10 @@ async fn download_asset(State(st): State<AppState>, Json(body): Json<DownloadBod
     };
     let settings = store::load_settings();
     let api_key = store::get_secret("api_key");
-    let cookie = store::get_secret("cookie");
     match download::fetch_and_save(
         &st.rb,
         api_key.as_deref(),
-        cookie.as_deref(),
+        &st.pool,
         id,
         &settings.save_dir,
     )
@@ -147,6 +177,7 @@ async fn download_asset(State(st): State<AppState>, Json(body): Json<DownloadBod
             "type_label": info.type_label,
             "method": info.method,
             "place_id": info.place_id,
+            "account": info.account,
             "path": info.path,
         })),
         Err(e) => fail(e.to_string()),
@@ -158,7 +189,7 @@ async fn get_settings() -> Json<Value> {
     ok(json!({
         "save_dir": s.save_dir,
         "has_key": store::get_secret("api_key").is_some(),
-        "has_cookie": store::get_secret("cookie").is_some(),
+        "cookie_count": store::load_cookies().len(),
     }))
 }
 
@@ -184,41 +215,155 @@ async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
 #[derive(Deserialize)]
 struct CredsBody {
     api_key: Option<String>,
-    cookie: Option<String>,
+    cookies: Option<String>,
 }
 
-async fn set_credentials(Json(body): Json<CredsBody>) -> Json<Value> {
-    for (key, val) in [("api_key", body.api_key), ("cookie", body.cookie)] {
-        if let Some(v) = val {
-            let v = v.trim();
-            let res = if v.is_empty() {
-                store::clear_secret(key)
-            } else {
-                store::save_secret(key, v)
-            };
-            if let Err(e) = res {
-                return fail(e.to_string());
-            }
+/// One cookie per line (or separated by spaces). A pasted `.ROBLOSECURITY=`
+/// prefix is stripped, duplicates are dropped.
+fn parse_cookies(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in raw.split(|c: char| c.is_whitespace() || c == ';') {
+        let c = part.trim().trim_start_matches(".ROBLOSECURITY=").trim();
+        if !c.is_empty() && !out.iter().any(|x| x == c) {
+            out.push(c.to_string());
         }
+    }
+    out
+}
+
+async fn set_credentials(State(st): State<AppState>, Json(body): Json<CredsBody>) -> Json<Value> {
+    if let Some(v) = body.api_key {
+        let v = v.trim();
+        let res = if v.is_empty() { store::clear_secret("api_key") } else { store::save_secret("api_key", v) };
+        if let Err(e) = res {
+            return fail(e.to_string());
+        }
+    }
+    if let Some(raw) = body.cookies {
+        if let Err(e) = store::save_cookies(&parse_cookies(&raw)) {
+            return fail(e.to_string());
+        }
+        st.pool.reload(&st.rb).await;
     }
     ok(json!({
         "has_key": store::get_secret("api_key").is_some(),
-        "has_cookie": store::get_secret("cookie").is_some(),
+        "cookie_count": store::load_cookies().len(),
     }))
 }
 
-async fn cookie_info(State(st): State<AppState>) -> Json<Value> {
-    let Some(cookie) = store::get_secret("cookie") else {
-        return ok(json!({ "alive": false, "reason": "no cookie saved" }));
-    };
-    let info = st.rb.cookie_info(&cookie).await;
-    ok(json!({
-        "alive": info.alive,
-        "user_id": info.user_id,
-        "username": info.username,
-        "display_name": info.display_name,
-        "robux": info.robux,
-    }))
+async fn accounts(State(st): State<AppState>) -> Json<Value> {
+    ok(st.pool.snapshot())
+}
+
+async fn refresh_accounts(State(st): State<AppState>) -> Json<Value> {
+    st.pool.reload(&st.rb).await;
+    ok(st.pool.snapshot())
+}
+
+#[derive(Deserialize)]
+struct BulkBody {
+    ids: Vec<String>,
+}
+
+async fn bulk_start(State(st): State<AppState>, Json(body): Json<BulkBody>) -> Json<Value> {
+    let mut ids: Vec<i64> = Vec::new();
+    for raw in &body.ids {
+        if let Some(id) = parse_asset_id(raw) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    if ids.is_empty() {
+        return fail("no valid asset ids found");
+    }
+    if ids.len() > BULK_MAX {
+        return fail(format!("{} ids, the limit is {BULK_MAX} per batch", ids.len()));
+    }
+    {
+        let mut b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+        if b.running {
+            return fail("a bulk download is already running");
+        }
+        *b = Bulk {
+            running: true,
+            cancel: false,
+            items: ids.iter().map(|&id| BulkItem { id, state: "queued", ..Default::default() }).collect(),
+        };
+    }
+    let workers = (st.pool.alive_count() * 2).clamp(2, 8);
+    let total = ids.len();
+    tokio::spawn(run_bulk(st, ids, workers));
+    ok(json!({ "total": total, "workers": workers }))
+}
+
+fn bulk_set(st: &AppState, i: usize, f: impl FnOnce(&mut BulkItem)) -> bool {
+    let mut b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+    f(&mut b.items[i]);
+    b.cancel
+}
+
+/// Workers pull ids off a shared index. A rate-limited asset waits and retries
+/// instead of failing, the pool decides which account goes next.
+async fn run_bulk(st: AppState, ids: Vec<i64>, workers: usize) {
+    let ids = Arc::new(ids);
+    let next = Arc::new(AtomicUsize::new(0));
+    let mut handles = Vec::new();
+    for _ in 0..workers {
+        let (st, ids, next) = (st.clone(), ids.clone(), next.clone());
+        handles.push(tokio::spawn(async move {
+            let settings = store::load_settings();
+            let api_key = store::get_secret("api_key");
+            loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                let Some(&id) = ids.get(i) else { break };
+                if bulk_set(&st, i, |it| it.state = "working") {
+                    bulk_set(&st, i, |it| it.state = "skipped");
+                    continue;
+                }
+                let mut tries = 0;
+                let res = loop {
+                    let r = download::fetch_and_save(&st.rb, api_key.as_deref(), &st.pool, id, &settings.save_dir).await;
+                    match r {
+                        Err(Error::RateLimited(s)) if tries < 4 => {
+                            tries += 1;
+                            bulk_set(&st, i, |it| it.state = "waiting");
+                            tokio::time::sleep(std::time::Duration::from_secs(s.max(10))).await;
+                            bulk_set(&st, i, |it| it.state = "working");
+                        }
+                        other => break other,
+                    }
+                };
+                match res {
+                    Ok(info) => bulk_set(&st, i, |it| {
+                        it.state = "ok";
+                        it.name = Some(info.name);
+                        it.method = Some(info.method);
+                        it.account = info.account;
+                        it.path = Some(info.path);
+                    }),
+                    Err(e) => bulk_set(&st, i, |it| {
+                        it.state = "error";
+                        it.error = Some(e.to_string());
+                    }),
+                };
+            }
+        }));
+    }
+    for h in handles {
+        let _ = h.await;
+    }
+    st.bulk.lock().unwrap_or_else(|e| e.into_inner()).running = false;
+}
+
+async fn bulk_status(State(st): State<AppState>) -> Json<Value> {
+    let b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+    ok(json!({ "running": b.running, "items": b.items }))
+}
+
+async fn bulk_cancel(State(st): State<AppState>) -> Json<Value> {
+    st.bulk.lock().unwrap_or_else(|e| e.into_inner()).cancel = true;
+    ok(Value::Null)
 }
 
 async fn get_history() -> Json<Value> {
