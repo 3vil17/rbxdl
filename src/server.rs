@@ -165,6 +165,9 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/studio/status", get(studio_status))
         .route("/api/studio/disconnect", post(studio_disconnect))
         .route("/api/studio/pair", post(studio_pair))
+        .route("/api/studio/plugin", get(plugin_state))
+        .route("/api/studio/install", post(plugin_install))
+        .route("/api/studio/pick-plugins", post(pick_plugins_dir))
         .route("/api/studio/submit", post(studio_submit))
         .route("/api/studio/job", get(studio_job))
         .route("/api/migrate/job", get(migrate_job))
@@ -768,6 +771,68 @@ fn unpaired() -> axum::response::Response {
         .into_response()
 }
 
+const PLUGIN_FILE: &str = "rbxyoinker-migrate.rbxmx";
+const PLUGIN_BODY: &str = include_str!("../plugin/rbxyoinker-migrate.rbxmx");
+
+/// Studio loads plugins from %LOCALAPPDATA%\Roblox\Plugins unless the user
+/// pointed the app somewhere else.
+fn plugins_dir() -> Option<std::path::PathBuf> {
+    let saved = store::load_settings().plugins_dir;
+    if !saved.trim().is_empty() {
+        return Some(std::path::PathBuf::from(saved));
+    }
+    dirs::data_local_dir().map(|d| d.join("Roblox").join("Plugins")).filter(|d| d.is_dir())
+}
+
+async fn plugin_state() -> Json<Value> {
+    let dir = plugins_dir();
+    let file = dir.as_ref().map(|d| d.join(PLUGIN_FILE));
+    let current = file.as_ref().and_then(|f| std::fs::read_to_string(f).ok());
+    ok(json!({
+        "dir": dir.map(|d| d.to_string_lossy().to_string()),
+        "installed": current.is_some(),
+        "up_to_date": current.as_deref() == Some(PLUGIN_BODY),
+    }))
+}
+
+#[derive(Deserialize)]
+struct InstallBody {
+    #[serde(default)]
+    dir: Option<String>,
+}
+
+async fn plugin_install(Json(body): Json<InstallBody>) -> Json<Value> {
+    if let Some(dir) = body.dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        if !std::path::Path::new(dir).is_dir() {
+            return fail("that folder doesn't exist");
+        }
+        let mut s = store::load_settings();
+        s.plugins_dir = dir.to_string();
+        if let Err(e) = store::save_settings(&s) {
+            return fail(e.to_string());
+        }
+    }
+    let Some(dir) = plugins_dir() else {
+        return ok(json!({ "need_path": true }));
+    };
+    let file = dir.join(PLUGIN_FILE);
+    if let Err(e) = std::fs::write(&file, PLUGIN_BODY) {
+        return fail(format!("couldn't write the plugin there ({e})"));
+    }
+    ok(json!({ "path": file.to_string_lossy() }))
+}
+
+async fn pick_plugins_dir() -> Json<Value> {
+    let picked = tokio::task::spawn_blocking(|| {
+        unlock_foreground();
+        rfd::FileDialog::new().set_title("Roblox Plugins folder").pick_folder()
+    })
+    .await
+    .ok()
+    .flatten();
+    ok(json!({ "dir": picked.map(|d| d.to_string_lossy().to_string()) }))
+}
+
 async fn studio_code(State(st): State<AppState>) -> Json<Value> {
     let code = crate::studio::lock(&st.studio).new_code();
     ok(json!({ "code": code }))
@@ -907,10 +972,16 @@ async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart
     let Some(manage) = st.rb.manageable_groups(&cookie).await else {
         return fail("couldn't check which groups this account manages, try again");
     };
-    let mut yours: Vec<String> = manage.iter().map(|g| format!("Group:{g}")).collect();
-    yours.push(format!("User:{}", body.user_id));
-    if !yours.contains(&body.to) {
+    if !(body.to == format!("User:{}", body.user_id) || manage.iter().any(|g| body.to == format!("Group:{g}"))) {
         return fail("this account can't upload to that group");
+    }
+    let mut yours: Vec<String> = Vec::new();
+    for (uid, _, _) in st.pool.alive_users() {
+        yours.push(format!("User:{uid}"));
+        let Some(c) = st.pool.cookie_for_user(uid) else { continue };
+        for g in st.rb.manageable_groups(&c).await.unwrap_or_default() {
+            yours.push(format!("Group:{g}"));
+        }
     }
     let wanted: Vec<i64> = body.ids.iter().filter_map(|x| x.parse().ok()).collect();
     let todo: Vec<usize> = {
@@ -935,7 +1006,7 @@ async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart
             .map(|(i, _)| i)
             .collect();
         if todo.is_empty() {
-            return fail("nothing to move. Only assets made by you or a group you manage can be moved");
+            return fail("nothing to move. Only assets made by your accounts or groups they manage can be moved");
         }
         for &i in &todo {
             j.items[i].state = "queued".into();

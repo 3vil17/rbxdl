@@ -85,6 +85,8 @@ pub struct Settings {
     pub name_template: String,
     #[serde(default = "yes")]
     pub images_png: bool,
+    #[serde(default)]
+    pub plugins_dir: String,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{name}_{id}";
@@ -107,6 +109,7 @@ impl Default for Settings {
             seen_version: String::new(),
             name_template: default_template(),
             images_png: true,
+            plugins_dir: String::new(),
         }
     }
 }

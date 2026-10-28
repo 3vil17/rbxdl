@@ -211,7 +211,11 @@
   select option { background: rgb(28,30,32); }
   .pair { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 12px 14px; border-radius: 6px; background: rgb(22,22,22);
     border: 1px solid rgba(255,255,255,0.09); flex-wrap: wrap; }
-  .pair .digits { font-family: monospace; font-size: 1.6rem; letter-spacing: 0.12em; color: #fff; font-weight: 600; }
+  .tiles { display: flex; gap: 6px; }
+  .tiles span { width: 34px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-family: monospace; font-size: 1.35rem;
+    font-weight: 600; color: #fff; user-select: all; }
+  .tiles span:nth-child(3) { margin-right: 8px; }
   .st.ready { color: rgb(59,186,87); }
   .arrow { color: rgb(102,102,102); margin: 0 4px; }
   input:hover { border-color: rgba(255, 255, 255, 0.2); }
@@ -417,7 +421,28 @@
           </div>
         </div>
         <div id="st-state" class="hint" style="margin-top:10px"></div>
-        <div id="st-code" class="pair" style="display:none"></div>
+        <div id="st-code" class="pair" style="display:none">
+          <div class="tiles" id="st-tiles"></div>
+          <div style="flex:1; min-width:140px">
+            <div style="font-size:0.8rem; color:rgb(212,212,212)">Type this into the plugin</div>
+            <div class="hint" style="margin:2px 0 0" id="st-left"></div>
+          </div>
+          <button class="btn" id="st-copy" data-i="copy">Copy</button>
+        </div>
+        <div class="sep"></div>
+        <div class="section-head">
+          <div style="font-size:0.8rem; color:rgb(170,170,170)" id="pl-state">Plugin</div>
+          <button class="btn" id="pl-install" data-i="download">Install plugin</button>
+        </div>
+        <div id="pl-pick" style="display:none; margin-top:10px">
+          <p class="hint" style="margin:0 0 8px">Couldn't find Studio's Plugins folder. In Studio it's <b>Plugins tab, Plugins Folder</b>. Pick or paste it here.</p>
+          <div class="frow">
+            <input id="pl-dir" type="text" placeholder="C:\Users\you\AppData\Local\Roblox\Plugins" autocomplete="off" spellcheck="false" />
+            <button class="btn" id="pl-browse" data-i="folder">Browse</button>
+            <button class="btn" id="pl-here" data-i="download">Install here</button>
+          </div>
+        </div>
+        <div class="note" id="pl-note"></div>
       </div>
 
       <div class="card" id="mg-card" style="display:none">
@@ -447,7 +472,7 @@
         <div class="counts" id="mg-counts"></div>
         <div class="note" id="mg-note"></div>
         <div class="rows" id="mg-rows"></div>
-        <p class="hint">Only assets made by your account or a group it manages get moved. Uploads go through your own login, the same as uploading in Studio.</p>
+        <p class="hint">Only assets made by one of your signed in accounts, or a group one of them manages, get moved. Shared from a group you don't manage? Sign in an account that manages it, or have its owner grant your new game access in Creator Hub (asset, Permissions) so it keeps working without a reupload.</p>
       </div>
     </section>
 
@@ -669,7 +694,7 @@ document.querySelectorAll("nav button").forEach((b) => {
     store("tab", tab);
     ["download", "bulk", "migrate", "accounts", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
     clearInterval(accTimer); clearInterval(mgTimer);
-    if (tab === "migrate") { loadTargets(); pollMigrate(); mgTimer = setInterval(pollMigrate, 1500); }
+    if (tab === "migrate") { loadTargets(); loadPluginState(); pollMigrate(); mgTimer = setInterval(pollMigrate, 1500); }
     if (tab === "settings") loadSettings();
     if (tab === "history") loadHistory();
     if (tab === "accounts") { loadAccounts(); accTimer = setInterval(loadAccounts, 2000); }
@@ -846,15 +871,43 @@ async function pollStudio() {
   $("#st-state").innerHTML = s.connected
     ? '<span class="dot ' + (live ? "on" : "off") + '"></span>' + (live ? "Connected" : "Paired, Studio isn't talking right now") + (s.place ? " · <b>" + esc(s.place) + "</b>" : "")
     : "Install the rbxyoinker plugin in Studio, click <b>Get a code</b> here and type it into the plugin.";
-  const box = $("#st-code");
+  stCode = s.code || "";
+  $("#st-code").style.display = s.code ? "" : "none";
   if (s.code) {
-    box.style.display = "";
+    const tiles = [...s.code].map((d) => "<span>" + esc(d) + "</span>").join("");
+    if ($("#st-tiles").dataset.code !== s.code) { $("#st-tiles").innerHTML = tiles; $("#st-tiles").dataset.code = s.code; }
     const left = s.code_left || 0;
-    box.innerHTML = '<span class="digits">' + esc(s.code.slice(0, 3)) + " " + esc(s.code.slice(3)) + "</span>" +
-      '<span class="hint" style="margin:0">Type this in the plugin. Expires in ' + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") + "</span>";
-  } else box.style.display = "none";
+    $("#st-left").textContent = "Expires in " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+  }
 }
+let stCode = "";
 $("#st-code-btn").onclick = async () => { await post("/api/studio/code", {}); pollStudio(); };
+$("#st-copy").onclick = async () => {
+  if (!stCode) return;
+  try { await navigator.clipboard.writeText(stCode); setBtn($("#st-copy"), "copy", "Copied"); setTimeout(() => setBtn($("#st-copy"), "copy", "Copy"), 1200); } catch (e) {}
+};
+async function loadPluginState() {
+  const res = await api("/api/studio/plugin"); if (!res.ok) return;
+  const p = res.data;
+  $("#pl-state").innerHTML = '<span class="dot ' + (p.up_to_date ? "on" : "off") + '"></span>Plugin ' +
+    (p.up_to_date ? "installed" : p.installed ? "installed, but out of date" : "not installed") +
+    (p.dir ? ' <span style="color:rgb(102,102,102)">in ' + esc(p.dir) + "</span>" : "");
+  setBtn($("#pl-install"), "download", p.up_to_date ? "Reinstall" : p.installed ? "Update plugin" : "Install plugin");
+}
+async function installPlugin(dir) {
+  const res = await post("/api/studio/install", dir ? { dir } : {});
+  if (!res.ok) { showNote($("#pl-note"), "err", esc(res.error)); return; }
+  if (res.data.need_path) { $("#pl-pick").style.display = ""; hideNote($("#pl-note")); return; }
+  $("#pl-pick").style.display = "none";
+  showNote($("#pl-note"), "ok", "Installed to <code>" + esc(res.data.path) + "</code>. Restart Studio (or reopen your place) to load it, then find <b>rbxyoinker, Migrate</b> in the Plugins tab.");
+  loadPluginState();
+}
+$("#pl-install").onclick = () => installPlugin(null);
+$("#pl-here").onclick = () => installPlugin($("#pl-dir").value.trim());
+$("#pl-browse").onclick = async () => {
+  const res = await post("/api/studio/pick-plugins", {});
+  if (res.ok && res.data.dir) $("#pl-dir").value = res.data.dir;
+};
 $("#st-off").onclick = async () => {
   if (!confirm("Disconnect Studio? The plugin will need a new code.")) return;
   await post("/api/studio/disconnect", {}); pollStudio();
@@ -870,8 +923,9 @@ async function loadTargets() {
 }
 function mgAccount() { return mgTargets.find((t) => String(t.user_id) === $("#mg-acc").value) || mgTargets[0]; }
 function mgYours() {
-  const a = mgAccount();
-  return a ? new Set(["User:" + a.user_id].concat(a.groups.map((g) => "Group:" + g.id))) : new Set();
+  const out = new Set();
+  mgTargets.forEach((a) => { out.add("User:" + a.user_id); a.groups.forEach((g) => out.add("Group:" + g.id)); });
+  return out;
 }
 function fillTargets() {
   const a = mgAccount();
