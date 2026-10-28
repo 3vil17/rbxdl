@@ -46,7 +46,7 @@ async fn quit_when_tab_closed(st: AppState) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         let quiet = st.last_ping.lock().unwrap_or_else(|e| e.into_inner()).elapsed();
-        let busy = st.bulk.lock().unwrap_or_else(|e| e.into_inner()).running;
+        let busy = st.bulk.lock().unwrap_or_else(|e| e.into_inner()).running || crate::migrate::lock(&st.migrate).running;
         if quiet > TAB_GONE_AFTER && !busy {
             std::process::exit(0);
         }
@@ -73,6 +73,7 @@ struct AppState {
     pool: Pool,
     bulk: Arc<Mutex<Bulk>>,
     last_ping: Arc<Mutex<std::time::Instant>>,
+    migrate: crate::migrate::Shared,
 }
 
 #[derive(Default)]
@@ -132,6 +133,7 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         pool: Pool::default(),
         bulk: Arc::default(),
         last_ping: Arc::new(Mutex::new(std::time::Instant::now())),
+        migrate: Arc::default(),
     };
     state.pool.reload(&state.rb).await;
 
@@ -157,6 +159,11 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/bulk/clear", post(bulk_clear))
         .route("/api/bulk/retry", post(bulk_retry))
         .route("/api/expand", post(expand))
+        .route("/api/migrate/submit", post(migrate_submit))
+        .route("/api/migrate/job", get(migrate_job))
+        .route("/api/migrate/targets", get(migrate_targets))
+        .route("/api/migrate/start", post(migrate_start))
+        .route("/api/migrate/cancel", post(migrate_cancel))
         .route("/api/bulk/zip", post(bulk_zip))
         .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/api/update", get(update_check))
@@ -740,6 +747,147 @@ async fn expand(State(st): State<AppState>, Json(body): Json<ExpandBody>) -> Jso
         });
     }
     ok(json!(out))
+}
+
+#[derive(Deserialize)]
+struct MigrateSubmit {
+    #[serde(default)]
+    place: String,
+    ids: Vec<String>,
+}
+
+async fn migrate_submit(State(st): State<AppState>, Json(body): Json<MigrateSubmit>) -> Json<Value> {
+    let mut ids: Vec<i64> = Vec::new();
+    for raw in &body.ids {
+        if let Ok(id) = raw.trim().parse::<i64>() {
+            if id > 0 && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    {
+        let mut j = crate::migrate::lock(&st.migrate);
+        if j.running {
+            return fail("a migration is running, wait for it or cancel it in the app");
+        }
+        let run_id = j.run_id;
+        *j = crate::migrate::Job {
+            place: body.place.chars().take(100).collect(),
+            run_id,
+            items: ids
+                .iter()
+                .map(|&id| crate::migrate::Item { id, state: "found".into(), ..Default::default() })
+                .collect(),
+            ..Default::default()
+        };
+    }
+    let run_id = crate::migrate::lock(&st.migrate).run_id;
+    tokio::spawn(crate::migrate::check(st.rb.clone(), st.pool.clone(), st.migrate.clone()));
+    ok(json!({ "count": ids.len(), "run_id": run_id }))
+}
+
+async fn migrate_job(State(st): State<AppState>) -> Json<Value> {
+    ok(json!(*crate::migrate::lock(&st.migrate)))
+}
+
+async fn migrate_targets(State(st): State<AppState>) -> Json<Value> {
+    let mut out = Vec::new();
+    for (uid, username, avatar) in st.pool.alive_users() {
+        let Some(cookie) = st.pool.cookie_for_user(uid) else { continue };
+        let manage = st.rb.manageable_groups(&cookie).await.unwrap_or_default();
+        let groups = st.rb.user_groups(uid).await;
+        let ids: Vec<i64> = groups.iter().map(|g| g.id).collect();
+        let icons = st.rb.group_icons(&ids).await;
+        out.push(json!({
+            "user_id": uid,
+            "username": username,
+            "avatar": avatar,
+            "groups": groups.iter().map(|g| json!({
+                "id": g.id,
+                "name": g.name,
+                "icon": icons.get(&g.id),
+                "manage": manage.contains(&g.id),
+            })).collect::<Vec<_>>(),
+        }));
+    }
+    ok(json!(out))
+}
+
+#[derive(Deserialize)]
+struct MigrateStart {
+    user_id: i64,
+    from: String,
+    to: String,
+    kinds: Vec<String>,
+    mode: String,
+}
+
+fn parse_creator(s: &str) -> Option<crate::roblox::Creator> {
+    let (kind, id) = s.split_once(':')?;
+    let id: i64 = id.parse().ok()?;
+    match kind {
+        "User" => Some(crate::roblox::Creator::User(id)),
+        "Group" => Some(crate::roblox::Creator::Group(id)),
+        _ => None,
+    }
+}
+
+async fn migrate_start(State(st): State<AppState>, Json(body): Json<MigrateStart>) -> Json<Value> {
+    let Some(cookie) = st.pool.cookie_for_user(body.user_id) else {
+        return fail("that account isn't signed in anymore, recheck it in Accounts");
+    };
+    let (Some(from), Some(to)) = (parse_creator(&body.from), parse_creator(&body.to)) else {
+        return fail("pick where the assets come from and where they go");
+    };
+    if body.from == body.to {
+        return fail("from and to are the same");
+    }
+    let Some(manage) = st.rb.manageable_groups(&cookie).await else {
+        return fail("couldn't check which groups this account manages, try again");
+    };
+    let allowed = |c: &crate::roblox::Creator| match c {
+        crate::roblox::Creator::User(id) => *id == body.user_id,
+        crate::roblox::Creator::Group(id) => manage.contains(id),
+    };
+    if !allowed(&from) || !allowed(&to) {
+        return fail("this account has to manage both groups (or be the account itself) to move assets between them");
+    }
+    let todo: Vec<usize> = {
+        let mut j = crate::migrate::lock(&st.migrate);
+        if j.running {
+            return fail("a migration is already running");
+        }
+        if !j.checked {
+            return fail("still reading the assets the plugin sent, give it a second");
+        }
+        let todo: Vec<usize> = j
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| it.owner == body.from && body.kinds.contains(&it.kind) && it.state != "ok")
+            .map(|(i, _)| i)
+            .collect();
+        if todo.is_empty() {
+            return fail("nothing to move, none of the picked types were made by that group");
+        }
+        for &i in &todo {
+            j.items[i].state = "queued".into();
+            j.items[i].error = None;
+        }
+        j.running = true;
+        j.cancel = false;
+        j.run_id += 1;
+        j.mode = if body.mode == "map" { "map".into() } else { "swap".into() };
+        todo
+    };
+    let total = todo.len();
+    tokio::spawn(crate::migrate::run(st.rb.clone(), st.pool.clone(), st.migrate.clone(), cookie, to, todo));
+    ok(json!({ "total": total }))
+}
+
+async fn migrate_cancel(State(st): State<AppState>) -> Json<Value> {
+    crate::migrate::lock(&st.migrate).cancel = true;
+    ok(Value::Null)
 }
 
 fn spawn_bulk(st: &AppState, todo: Vec<usize>) -> usize {

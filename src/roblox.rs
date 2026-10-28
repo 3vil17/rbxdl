@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -55,6 +55,12 @@ pub struct Release {
     pub url: String,
     pub notes: String,
     pub exe_url: Option<String>,
+}
+
+/// Who a moved asset gets created under.
+pub enum Creator {
+    User(i64),
+    Group(i64),
 }
 
 #[derive(Clone)]
@@ -277,6 +283,125 @@ impl Roblox {
         let v: Value = self.http.get(&url).send().await.ok()?.json().await.ok()?;
         let ids = v["assets"].as_array()?.iter().filter_map(|it| it["id"].as_i64()).collect();
         Some((v["name"].as_str().unwrap_or("outfit").to_string(), ids))
+    }
+
+    /// A CSRF token, taken from an endpoint that refuses requests without one.
+    async fn csrf_token(&self, cookie: &str) -> Option<String> {
+        let resp = self
+            .http
+            .post("https://auth.roblox.com/v2/logout")
+            .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+            .send()
+            .await
+            .ok()?;
+        resp.headers().get("x-csrf-token").and_then(|v| v.to_str().ok()).map(String::from)
+    }
+
+    /// Groups this cookie's user can manage, the only ones assets get moved between.
+    pub async fn manageable_groups(&self, cookie: &str) -> Option<Vec<i64>> {
+        let resp = self
+            .http
+            .get("https://develop.roblox.com/v1/user/groups/canmanage")
+            .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let v: Value = resp.json().await.ok()?;
+        Some(v["data"].as_array()?.iter().filter_map(|it| it["id"].as_i64()).collect())
+    }
+
+    pub async fn group_icons(&self, ids: &[i64]) -> HashMap<i64, String> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(100) {
+            let csv: Vec<String> = chunk.iter().map(|i| i.to_string()).collect();
+            let url = format!(
+                "https://thumbnails.roblox.com/v1/groups/icons?groupIds={}&size=150x150&format=Png&isCircular=false",
+                csv.join(",")
+            );
+            let Ok(resp) = self.http.get(&url).send().await else { continue };
+            let Ok(v) = resp.json::<Value>().await else { continue };
+            for it in v["data"].as_array().into_iter().flatten() {
+                if let (Some(id), Some(img)) = (it["targetId"].as_i64(), it["imageUrl"].as_str()) {
+                    out.insert(id, img.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// Creates a new asset through the Assets API with the cookie's login and
+    /// waits for the upload operation to hand back the new id.
+    pub async fn upload_asset(
+        &self,
+        cookie: &str,
+        bytes: Vec<u8>,
+        asset_type: &str,
+        name: &str,
+        file_name: &str,
+        mime: &str,
+        creator: &Creator,
+    ) -> Result<i64> {
+        let token = self
+            .csrf_token(cookie)
+            .await
+            .ok_or_else(|| Error::Other("couldn't get a CSRF token from Roblox".into()))?;
+        let creator_json = match creator {
+            Creator::User(id) => json!({ "userId": id.to_string() }),
+            Creator::Group(id) => json!({ "groupId": id.to_string() }),
+        };
+        let request = json!({
+            "assetType": asset_type,
+            "displayName": name,
+            "description": "",
+            "creationContext": { "creator": creator_json },
+        })
+        .to_string();
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file_name.to_string())
+            .mime_str(mime)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let form = reqwest::multipart::Form::new().text("request", request).part("fileContent", part);
+        let resp = self
+            .http
+            .post("https://apis.roblox.com/assets/user-auth/v1/assets")
+            .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+            .header("x-csrf-token", &token)
+            .multipart(form)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(error_from(resp).await);
+        }
+        let v: Value = resp.json().await?;
+        if let Some(id) = asset_id_from(&v) {
+            return Ok(id);
+        }
+        let op = v["operationId"]
+            .as_str()
+            .map(String::from)
+            .or_else(|| v["path"].as_str().map(|p| p.rsplit('/').next().unwrap_or(p).to_string()))
+            .ok_or_else(|| Error::Other("upload started but Roblox returned no operation".into()))?;
+        for _ in 0..30 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let ov: Value = self
+                .http
+                .get(format!("https://apis.roblox.com/assets/user-auth/v1/operations/{op}"))
+                .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+                .header("x-csrf-token", &token)
+                .send()
+                .await?
+                .json()
+                .await?;
+            if ov["done"].as_bool() == Some(true) {
+                return asset_id_from(&ov).ok_or_else(|| {
+                    Error::Other(format!("upload finished without an asset id: {}", ov.to_string().chars().take(200).collect::<String>()))
+                });
+            }
+        }
+        Err(Error::Other("upload is still processing after 30s, check the group's creations".into()))
     }
 
     pub async fn releases(&self) -> Option<Vec<Release>> {
@@ -523,4 +648,10 @@ async fn error_from(resp: reqwest::Response) -> Error {
         (404, None) => Error::Denied("404 asset not found".into()),
         (s, None) => Error::Denied(format!("{s} no message from Roblox")),
     }
+}
+
+fn asset_id_from(v: &Value) -> Option<i64> {
+    [&v["response"]["assetId"], &v["assetId"], &v["response"]["id"]]
+        .iter()
+        .find_map(|x| x.as_i64().or_else(|| x.as_str().and_then(|s| s.parse().ok())))
 }

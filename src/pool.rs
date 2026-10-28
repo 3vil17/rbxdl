@@ -95,6 +95,20 @@ impl Pool {
         st.cursor = 0;
     }
 
+    pub fn cookie_for_user(&self, user_id: i64) -> Option<String> {
+        self.lock().accounts.iter().find(|a| a.alive && a.user_id == Some(user_id)).map(|a| a.cookie.clone())
+    }
+
+    /// Live accounts as (user id, username, avatar).
+    pub fn alive_users(&self) -> Vec<(i64, String, Option<String>)> {
+        self.lock()
+            .accounts
+            .iter()
+            .filter(|a| a.alive)
+            .filter_map(|a| Some((a.user_id?, a.username.clone().unwrap_or_default(), a.avatar.clone())))
+            .collect()
+    }
+
     pub fn dead_cookies(&self) -> Vec<String> {
         self.lock().accounts.iter().filter(|a| !a.alive).map(|a| a.cookie.clone()).collect()
     }

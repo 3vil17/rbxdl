@@ -198,12 +198,18 @@
   .st.working, .st.waiting { color: rgb(212,212,212); }
   .row .btn { padding: 4px 9px; font-size: 12px; }
 
-  input[type="text"], input[type="password"] {
+  input[type="text"], input[type="password"], select {
     background: rgb(22, 22, 22); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 6px;
     color: rgb(224, 224, 224); font-family: var(--font-sans); font-size: 13px; font-weight: 400;
     padding: 7px 12px; outline: none; box-sizing: border-box; width: 100%;
     transition: border-color 0.2s, background 0.2s;
   }
+  select { appearance: none; cursor: pointer; padding-right: 30px; background-repeat: no-repeat; background-position: right 10px center;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+  select:hover { border-color: rgba(255, 255, 255, 0.2); }
+  select:focus { border-color: rgba(255, 255, 255, 0.22); }
+  select option { background: rgb(28,30,32); }
+  .arrow { color: rgb(102,102,102); margin: 0 4px; }
   input:hover { border-color: rgba(255, 255, 255, 0.2); }
   input:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
   input::placeholder { color: rgb(85, 85, 85); }
@@ -295,6 +301,7 @@
       <nav>
         <button data-tab="download" class="active" data-i="download">Download</button>
         <button data-tab="bulk" data-i="layers">Bulk</button>
+        <button data-tab="migrate" data-i="move">Migrate</button>
         <button data-tab="accounts" data-i="users">Accounts</button>
         <button data-tab="settings" data-i="settings">Settings</button>
         <button data-tab="history" data-i="history">History</button>
@@ -392,6 +399,38 @@
         <div class="fgroups" id="fail-groups"></div>
         <div class="note" id="bulk-note"></div>
         <div class="rows" id="bulk-rows"></div>
+      </div>
+    </section>
+
+    <!-- MIGRATE -->
+    <section id="tab-migrate" style="display:none; flex-direction:column; gap:10px;">
+      <div class="card">
+        <h2 class="sect"><i data-i="move"></i>Move assets between groups</h2>
+        <p class="hint" id="mg-source" style="margin-top:0"></p>
+        <div class="fgrid" style="margin-top:12px">
+          <label id="mg-acc-label">Account</label>
+          <select id="mg-acc"></select>
+          <label>From</label>
+          <select id="mg-from"></select>
+          <label>To</label>
+          <select id="mg-to"></select>
+        </div>
+        <div class="chips" id="mg-kinds"></div>
+        <p class="hint" id="mg-other"></p>
+        <div class="seg" id="mg-mode">
+          <button data-m="swap" class="on">Swap IDs in the place</button><button data-m="map">Only give me a mapping</button>
+        </div>
+        <p class="hint" id="mg-audio" style="display:none">Audio uploads count toward Roblox's monthly limit: 100 a month with ID verification, 10 without.</p>
+        <div class="fbtns">
+          <button class="btn" id="mg-start" data-i="move">Move assets</button>
+          <button class="btn" id="mg-cancel" data-i="square" disabled>Cancel</button>
+          <button class="btn" id="mg-copy" data-i="copy" disabled>Copy mapping</button>
+        </div>
+        <div class="bar"><div id="mg-bar"></div></div>
+        <div class="counts" id="mg-counts"></div>
+        <div class="note" id="mg-note"></div>
+        <div class="rows" id="mg-rows"></div>
+        <p class="hint">Only assets made by the <b>From</b> creator get uploaded, and your account has to manage both groups. Uploads go through your own login, the same as uploading in Studio.</p>
       </div>
     </section>
 
@@ -552,6 +591,7 @@ const ICONS = {
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  move: '<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>',
   square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
   folder: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
@@ -602,15 +642,16 @@ function errHtml(msg) {
 }
 
 function store(k, v) { try { if (v === undefined) return localStorage.getItem("ryk_" + k); localStorage.setItem("ryk_" + k, v); } catch (e) { return null; } }
-let accTimer = null;
+let accTimer = null, mgTimer = null;
 document.querySelectorAll("nav button").forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     const tab = b.dataset.tab;
     store("tab", tab);
-    ["download", "bulk", "accounts", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
-    clearInterval(accTimer);
+    ["download", "bulk", "migrate", "accounts", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
+    clearInterval(accTimer); clearInterval(mgTimer);
+    if (tab === "migrate") { loadTargets(); pollMigrate(); mgTimer = setInterval(pollMigrate, 1500); }
     if (tab === "settings") loadSettings();
     if (tab === "history") loadHistory();
     if (tab === "accounts") { loadAccounts(); accTimer = setInterval(loadAccounts, 2000); }
@@ -771,6 +812,105 @@ $("#add-cookies").onclick = async () => {
   $("#cookies").value = "";
   showNote($("#cookie-note"), res.data.added ? "ok" : "info", res.data.added ? "Added " + res.data.added + " cookie(s)." : "Those were already saved.");
   loadCookies();
+};
+
+// ---- Migrate ----
+let mgTargets = [], mgJob = null, mgMode = "swap";
+const mgKindsOff = new Set();
+const KIND_NAMES = { Audio: "Sounds", Image: "Images", Mesh: "Meshes", Animation: "Animations" };
+async function loadTargets() {
+  if (mgTargets.length) return;
+  const res = await api("/api/migrate/targets");
+  mgTargets = res.ok ? res.data : [];
+  $("#mg-acc").innerHTML = mgTargets.map((t) => '<option value="' + t.user_id + '">@' + esc(t.username) + "</option>").join("");
+  const one = mgTargets.length <= 1;
+  $("#mg-acc").style.display = one ? "none" : ""; $("#mg-acc-label").style.display = one ? "none" : "";
+  fillCreators();
+}
+function mgAccount() { return mgTargets.find((t) => String(t.user_id) === $("#mg-acc").value) || mgTargets[0]; }
+function mgBestFrom() {
+  const n = {};
+  (mgJob ? mgJob.items : []).forEach((it) => { if (it.kind && it.owner) n[it.owner] = (n[it.owner] || 0) + 1; });
+  return Object.keys(n).sort((x, y) => n[y] - n[x])[0] || null;
+}
+function fillCreators() {
+  const a = mgAccount();
+  if (!a) { $("#mg-from").innerHTML = $("#mg-to").innerHTML = "<option>No signed in accounts, add a cookie in Settings</option>"; renderMigrate(); return; }
+  const opts = '<option value="User:' + a.user_id + '">@' + esc(a.username) + " (you)</option>" +
+    a.groups.filter((g) => g.manage).map((g) => '<option value="Group:' + g.id + '">' + esc(g.name) + "</option>").join("");
+  const keepFrom = $("#mg-from").value, keepTo = $("#mg-to").value;
+  $("#mg-from").innerHTML = opts; $("#mg-to").innerHTML = opts;
+  const has = (sel, v) => [...sel.options].some((o) => o.value === v);
+  const best = mgBestFrom();
+  if (has($("#mg-from"), keepFrom)) $("#mg-from").value = keepFrom;
+  else if (best && has($("#mg-from"), best)) $("#mg-from").value = best;
+  if (has($("#mg-to"), keepTo)) $("#mg-to").value = keepTo;
+  renderMigrate();
+}
+$("#mg-acc").onchange = fillCreators;
+$("#mg-from").onchange = () => renderMigrate();
+$("#mg-to").onchange = () => renderMigrate();
+document.querySelectorAll("#mg-mode button").forEach((b) => {
+  b.onclick = () => { mgMode = b.dataset.m; document.querySelectorAll("#mg-mode button").forEach((x) => x.classList.toggle("on", x === b)); };
+});
+async function pollMigrate() {
+  const res = await api("/api/migrate/job");
+  if (!res.ok) return;
+  const fresh = !mgJob || mgJob.place !== res.data.place || mgJob.items.length !== res.data.items.length || mgJob.checked !== res.data.checked;
+  mgJob = res.data;
+  if (fresh && mgTargets.length) fillCreators(); else renderMigrate();
+}
+function renderMigrate() {
+  const j = mgJob;
+  if (!j || !j.items.length) {
+    $("#mg-source").innerHTML = "Nothing from Studio yet. Open the rbxyoinker plugin in your place and click <b>Scan place</b>.";
+    $("#mg-kinds").innerHTML = ""; $("#mg-other").textContent = ""; $("#mg-rows").innerHTML = ""; $("#mg-counts").innerHTML = "";
+    $("#mg-start").disabled = true; $("#mg-copy").disabled = true; return;
+  }
+  const from = $("#mg-from").value;
+  $("#mg-source").innerHTML = "From Studio: <b>" + esc(j.place || "your place") + "</b>, " + j.items.length + " asset ids" + (j.checked ? "" : ' <span class="spinner"></span> reading them');
+  const mine = j.items.filter((it) => it.kind && it.owner === from);
+  const counts = {};
+  mine.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
+  $("#mg-kinds").innerHTML = Object.keys(KIND_NAMES).filter((k) => counts[k]).map((k) =>
+    '<button class="chip' + (mgKindsOff.has(k) ? " off" : "") + '" data-k="' + k + '">' + KIND_NAMES[k] + " " + counts[k] + "</button>").join("");
+  $("#mg-kinds").querySelectorAll(".chip").forEach((c) => {
+    c.onclick = () => { const k = c.dataset.k; mgKindsOff.has(k) ? mgKindsOff.delete(k) : mgKindsOff.add(k); renderMigrate(); };
+  });
+  const other = j.items.length - mine.length;
+  $("#mg-other").textContent = j.checked && other ? other + " other ids weren't made by this creator, or can't be moved (models, plugins and so on), so they stay as they are." : "";
+  const picked = mine.filter((it) => !mgKindsOff.has(it.kind) && it.state !== "ok");
+  $("#mg-audio").style.display = picked.some((it) => it.kind === "Audio") ? "" : "none";
+  const shown = j.items.filter((it) => it.state !== "found");
+  const c = { ok: 0, error: 0 };
+  shown.forEach((it) => { if (c[it.state] != null) c[it.state]++; });
+  const done = c.ok + c.error;
+  $("#mg-bar").style.width = (shown.length ? (done / shown.length) * 100 : 0) + "%";
+  $("#mg-counts").innerHTML = shown.length ? "<span><b>" + done + "</b> / " + shown.length + " done</span><span><b>" + c.ok + "</b> moved</span><span><b>" + c.error + "</b> failed</span>" : "";
+  $("#mg-rows").innerHTML = shown.map((it) =>
+    '<div class="row"><div class="main"><div class="t">' + esc(it.name || "asset") + " <span>#" + it.id + "</span>" +
+    (it.new_id ? '<span class="arrow">&rarr;</span><span style="color:rgb(59,186,87)">#' + it.new_id + "</span>" : "") + "</div>" +
+    (it.error ? '<div class="s err">' + esc(it.error) + "</div>" : '<div class="s">' + esc(it.type_label || it.kind) + "</div>") +
+    '</div><span class="st ' + esc(it.state) + '">' + esc(it.state) + "</span></div>").join("");
+  $("#mg-start").disabled = j.running || !j.checked || !picked.length || from === $("#mg-to").value;
+  setBtn($("#mg-start"), "move", picked.length ? "Move " + picked.length + " asset" + (picked.length > 1 ? "s" : "") : "Move assets");
+  $("#mg-cancel").disabled = !j.running;
+  $("#mg-copy").disabled = !c.ok;
+}
+$("#mg-start").onclick = async () => {
+  const a = mgAccount(); if (!a) return;
+  const kinds = Object.keys(KIND_NAMES).filter((k) => !mgKindsOff.has(k));
+  const res = await post("/api/migrate/start", { user_id: a.user_id, from: $("#mg-from").value, to: $("#mg-to").value, kinds, mode: mgMode });
+  if (!res.ok) { showNote($("#mg-note"), "err", esc(res.error)); return; }
+  showNote($("#mg-note"), "info", "Moving " + res.data.total + " assets. " +
+    (mgMode === "swap" ? "Keep Studio open, the plugin swaps the IDs when this finishes." : "The mapping will be here when it's done."));
+  pollMigrate();
+};
+$("#mg-cancel").onclick = () => post("/api/migrate/cancel", {});
+$("#mg-copy").onclick = async () => {
+  const lines = (mgJob ? mgJob.items : []).filter((it) => it.new_id).map((it) => it.id + " -> " + it.new_id);
+  try { await navigator.clipboard.writeText(lines.join(String.fromCharCode(10))); showNote($("#mg-note"), "ok", "Copied " + lines.length + " old -> new ids."); }
+  catch (e) { showNote($("#mg-note"), "err", "Couldn't copy: " + esc(e.message)); }
 };
 
 // ---- Accounts ----

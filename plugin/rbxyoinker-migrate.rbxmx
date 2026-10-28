@@ -1,0 +1,336 @@
+<roblox version="4"><Item class="Script" referent="RBX0"><Properties><string name="Name">rbxyoinker Migrate</string><ProtectedString name="Source"><![CDATA[local HttpService = game:GetService("HttpService")
+local ChangeHistoryService = game:GetService("ChangeHistoryService")
+local ScriptEditorService = game:GetService("ScriptEditorService")
+local AssetService = game:GetService("AssetService")
+
+local serverUrl = "http://127.0.0.1:48620"
+
+local watched = {
+	Sound = { "SoundId" },
+	MeshPart = { "MeshId", "TextureID" },
+	SpecialMesh = { "MeshId", "TextureId" },
+	FileMesh = { "MeshId", "TextureId" },
+	Decal = { "Texture" },
+	Texture = { "Texture" },
+	ImageLabel = { "Image", "HoverImage", "PressedImage" },
+	ImageButton = { "Image", "HoverImage", "PressedImage" },
+	ParticleEmitter = { "Texture" },
+	Beam = { "Texture" },
+	Trail = { "Texture" },
+	Animation = { "AnimationId" },
+	Shirt = { "ShirtTemplate" },
+	Pants = { "PantsTemplate" },
+	ShirtGraphic = { "Graphic" },
+	Tool = { "TextureId" },
+	Sky = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp", "SunTextureId", "MoonTextureId" },
+}
+
+local refs = {}
+local scriptRefs = {}
+local lastMap = {}
+local seenRun = -1
+local polling = false
+
+local toolbar = plugin:CreateToolbar("rbxyoinker")
+local toggle = toolbar:CreateButton("Migrate", "Move this place's assets to another group with rbxyoinker", "")
+toggle.ClickableWhenViewportHidden = true
+
+local widget = plugin:CreateDockWidgetPluginGui(
+	"RbxyoinkerMigrate",
+	DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Right, false, false, 300, 240, 260, 200)
+)
+widget.Title = "rbxyoinker migrate"
+
+local root = Instance.new("Frame")
+root.Size = UDim2.fromScale(1, 1)
+root.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+root.BorderSizePixel = 0
+root.Parent = widget
+
+local padding = Instance.new("UIPadding")
+padding.PaddingTop = UDim.new(0, 14)
+padding.PaddingBottom = UDim.new(0, 14)
+padding.PaddingLeft = UDim.new(0, 14)
+padding.PaddingRight = UDim.new(0, 14)
+padding.Parent = root
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 10)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = root
+
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Size = UDim2.new(1, 0, 0, 20)
+title.Font = Enum.Font.GothamBold
+title.RichText = true
+title.Text = 'rbx<font color="#3BEA57">yoinker</font> <font color="#888888">migrate</font>'
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 15
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.LayoutOrder = 1
+title.Parent = root
+
+local info = Instance.new("TextLabel")
+info.BackgroundTransparency = 1
+info.Size = UDim2.fromScale(1, 0)
+info.AutomaticSize = Enum.AutomaticSize.Y
+info.Font = Enum.Font.Gotham
+info.Text = "Scan sends every asset id in this place to the rbxyoinker app. Pick the groups and start there, this panel swaps the new ids in when it's done."
+info.TextColor3 = Color3.fromRGB(136, 136, 136)
+info.TextSize = 12
+info.TextWrapped = true
+info.TextXAlignment = Enum.TextXAlignment.Left
+info.LayoutOrder = 2
+info.Parent = root
+
+local scanButton = Instance.new("TextButton")
+scanButton.Size = UDim2.new(1, 0, 0, 34)
+scanButton.BackgroundColor3 = Color3.fromRGB(36, 38, 40)
+scanButton.AutoButtonColor = true
+scanButton.Font = Enum.Font.GothamMedium
+scanButton.Text = "Scan place"
+scanButton.TextColor3 = Color3.fromRGB(224, 224, 224)
+scanButton.TextSize = 13
+scanButton.LayoutOrder = 3
+scanButton.Parent = root
+local scanCorner = Instance.new("UICorner")
+scanCorner.CornerRadius = UDim.new(0, 6)
+scanCorner.Parent = scanButton
+local scanStroke = Instance.new("UIStroke")
+scanStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+scanStroke.Color = Color3.fromRGB(60, 62, 66)
+scanStroke.Parent = scanButton
+
+local applyButton = scanButton:Clone()
+applyButton.Text = "Swap ids again"
+applyButton.LayoutOrder = 4
+applyButton.Visible = false
+applyButton.Parent = root
+
+local track = Instance.new("Frame")
+track.Size = UDim2.new(1, 0, 0, 4)
+track.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+track.BorderSizePixel = 0
+track.LayoutOrder = 5
+track.Parent = root
+local trackCorner = Instance.new("UICorner")
+trackCorner.CornerRadius = UDim.new(1, 0)
+trackCorner.Parent = track
+
+local fill = Instance.new("Frame")
+fill.Size = UDim2.fromScale(0, 1)
+fill.BackgroundColor3 = Color3.fromRGB(59, 234, 87)
+fill.BorderSizePixel = 0
+fill.Parent = track
+trackCorner:Clone().Parent = fill
+
+local status = Instance.new("TextLabel")
+status.BackgroundTransparency = 1
+status.Size = UDim2.fromScale(1, 0)
+status.AutomaticSize = Enum.AutomaticSize.Y
+status.Font = Enum.Font.Gotham
+status.Text = "The rbxyoinker app has to be running."
+status.TextColor3 = Color3.fromRGB(136, 136, 136)
+status.TextSize = 12
+status.TextWrapped = true
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.LayoutOrder = 6
+status.Parent = root
+
+local function setStatus(text, color)
+	status.Text = text
+	status.TextColor3 = color or Color3.fromRGB(136, 136, 136)
+end
+
+local function call(method, path, body)
+	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
+		Url = serverUrl .. path,
+		Method = method,
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = body and HttpService:JSONEncode(body) or nil,
+	})
+	if not ok or not res.Success then
+		setStatus("Can't reach rbxyoinker. Start the app and try again.", Color3.fromRGB(208, 96, 112))
+		return nil
+	end
+	local decoded = HttpService:JSONDecode(res.Body)
+	if not decoded.ok then
+		setStatus(tostring(decoded.error), Color3.fromRGB(208, 96, 112))
+		return nil
+	end
+	return decoded.data
+end
+
+local function scan()
+	refs = {}
+	scriptRefs = {}
+	local ids = {}
+	local seen = {}
+	for _, inst in game:GetDescendants() do
+		local props = watched[inst.ClassName]
+		if props then
+			for _, prop in props do
+				local ok, value = pcall(function()
+					return inst[prop]
+				end)
+				local digits = ok and typeof(value) == "string" and string.match(value, "%d%d%d+")
+				if digits then
+					table.insert(refs, { instance = inst, prop = prop, id = digits })
+					if not seen[digits] then
+						seen[digits] = true
+						table.insert(ids, digits)
+					end
+				end
+			end
+		elseif inst:IsA("LuaSourceContainer") then
+			local ok, source = pcall(function()
+				return inst.Source
+			end)
+			if ok and typeof(source) == "string" then
+				local found = false
+				for _, pattern in { "rbxassetid://(%d+)", "asset/%?id=(%d+)" } do
+					for digits in string.gmatch(source, pattern) do
+						found = true
+						if not seen[digits] then
+							seen[digits] = true
+							table.insert(ids, digits)
+						end
+					end
+				end
+				if found then
+					table.insert(scriptRefs, inst)
+				end
+			end
+		end
+	end
+	return ids
+end
+
+local function applySwaps()
+	local swapped = 0
+	local waiting = 0
+	local meshParts = {}
+	local recording = ChangeHistoryService:TryBeginRecording("rbxyoinker migrate")
+	for _, ref in refs do
+		local newId = lastMap[ref.id]
+		if newId and ref.instance.Parent then
+			local content = "rbxassetid://" .. newId
+			if ref.instance:IsA("MeshPart") and ref.prop == "MeshId" then
+				local source = meshParts[newId]
+				if not source then
+					local ok, part = pcall(AssetService.CreateMeshPartAsync, AssetService, content)
+					if ok then
+						source = part
+						meshParts[newId] = part
+					end
+				end
+				if source and pcall(ref.instance.ApplyMesh, ref.instance, source) then
+					ref.id = newId
+					swapped += 1
+				else
+					waiting += 1
+				end
+			elseif pcall(function()
+				ref.instance[ref.prop] = content
+			end) then
+				ref.id = newId
+				swapped += 1
+			end
+		end
+	end
+	for _, container in scriptRefs do
+		if container.Parent then
+			pcall(ScriptEditorService.UpdateSourceAsync, ScriptEditorService, container, function(source)
+				for oldId, newId in lastMap do
+					local replaced, count = string.gsub(source, "rbxassetid://" .. oldId .. "%f[%D]", "rbxassetid://" .. newId)
+					local replacedAgain, countAgain = string.gsub(replaced, "asset/%?id=" .. oldId .. "%f[%D]", "asset/?id=" .. newId)
+					source = replacedAgain
+					swapped += count + countAgain
+				end
+				return source
+			end)
+		end
+	end
+	if recording then
+		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+	if waiting > 0 then
+		setStatus(swapped .. " ids swapped. " .. waiting .. " meshes aren't processed by Roblox yet, click Swap ids again in a minute.", Color3.fromRGB(224, 224, 224))
+	else
+		setStatus(swapped .. " ids swapped. Ctrl+Z undoes it.", Color3.fromRGB(59, 186, 87))
+	end
+	applyButton.Visible = true
+end
+
+local function poll()
+	if polling then
+		return
+	end
+	polling = true
+	task.spawn(function()
+		while polling and widget.Enabled do
+			local job = call("GET", "/api/migrate/job")
+			if not job then
+				break
+			end
+			local total = 0
+			local done = 0
+			for _, item in job.items do
+				if item.state ~= "found" then
+					total += 1
+					if item.state == "ok" or item.state == "error" then
+						done += 1
+					end
+				end
+			end
+			fill.Size = UDim2.fromScale(total > 0 and done / total or 0, 1)
+			if job.running then
+				setStatus("Moving " .. done .. " / " .. total .. " ...", Color3.fromRGB(224, 224, 224))
+			elseif job.run_id ~= seenRun and total > 0 then
+				seenRun = job.run_id
+				lastMap = {}
+				for _, item in job.items do
+					if item.new_id then
+						lastMap[tostring(item.id)] = tostring(item.new_id)
+					end
+				end
+				if job.mode == "swap" then
+					applySwaps()
+				else
+					setStatus("Done. Copy the mapping from the app.", Color3.fromRGB(59, 186, 87))
+				end
+			end
+			task.wait(2)
+		end
+		polling = false
+	end)
+end
+
+scanButton.MouseButton1Click:Connect(function()
+	setStatus("Scanning ...")
+	local ids = scan()
+	if #ids == 0 then
+		setStatus("No asset ids found in this place.")
+		return
+	end
+	local sent = call("POST", "/api/migrate/submit", { place = game.Name, ids = ids })
+	if not sent then
+		return
+	end
+	seenRun = sent.run_id
+	applyButton.Visible = false
+	fill.Size = UDim2.fromScale(0, 1)
+	setStatus("Sent " .. sent.count .. " ids. Open Migrate in rbxyoinker, pick the groups and start.", Color3.fromRGB(224, 224, 224))
+	poll()
+end)
+
+applyButton.MouseButton1Click:Connect(applySwaps)
+
+toggle.Click:Connect(function()
+	widget.Enabled = not widget.Enabled
+	if widget.Enabled and seenRun >= 0 then
+		poll()
+	end
+end)
+]]></ProtectedString></Properties></Item></roblox>
