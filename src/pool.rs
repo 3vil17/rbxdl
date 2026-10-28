@@ -179,11 +179,13 @@ impl Pool {
                     .cooldown_until
                     .filter(|t| *t > now)
                     .map_or(0, |t| (t - now).as_secs() + 1);
+                let token = a.cookie.rfind("|_").map_or(a.cookie.as_str(), |i| &a.cookie[i + 2..]);
+                let preview = format!("{}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}", token.chars().take(6).collect::<String>());
                 json!({
                     "username": a.username,
                     "user_id": a.user_id,
                     "avatar": a.avatar,
-                    "preview": format!("{}\u{2026}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}", a.cookie.chars().take(22).collect::<String>()),
+                    "preview": preview,
                     "alive": a.alive,
                     "uses": a.uses,
                     "limited": a.limited,
