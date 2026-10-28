@@ -141,15 +141,38 @@
   .modal code { background: rgba(255,255,255,0.07); border-radius: 4px; padding: 1px 5px; font-size: 0.78rem; color: rgb(212,212,212); }
   .foot { text-align: center; font-size: 0.72rem; color: rgb(102, 102, 102); margin: 6px 0 0; }
   .foot b { color: var(--green); font-weight: 500; }
-  textarea.lines {
-    white-space: pre; overflow-x: auto; overflow-wrap: normal; line-height: 26px; padding: 0 12px;
-    min-height: 132px; background-color: rgb(22, 22, 22); background-attachment: local;
-    background-image: repeating-linear-gradient(180deg, transparent 0 26px, rgba(255,255,255,0.025) 26px 52px);
-  }
   .avatar { width: 30px; height: 30px; border-radius: 50%; background: rgb(40,40,40); object-fit: cover; flex-shrink: 0;
     border: 1px solid rgba(255,255,255,0.1); }
   .avatar.off { filter: grayscale(1); opacity: 0.5; }
-  #cookie-display { color: rgb(170,170,170); min-height: 0; height: auto; }
+  .cklist { border: 1px solid rgba(255,255,255,0.09); border-radius: 6px; background: rgb(22,22,22); max-height: 260px; overflow-y: auto; scrollbar-width: thin; }
+  .ckrow { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 6px 0 10px; font-size: 0.75rem; }
+  .ckrow:nth-child(even) { background: rgba(255,255,255,0.025); }
+  .ckrow img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: rgb(40,40,40); }
+  .ckrow .n { color: rgb(224,224,224); min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ckrow .live { color: rgb(136,136,136); flex-shrink: 0; width: 64px; }
+  .ckrow .live .dot { width: 6px; height: 6px; }
+  .ckrow .tok { font-family: monospace; font-size: 0.7rem; color: rgb(102,102,102); flex-shrink: 0; }
+  .ckrow.dead img { filter: grayscale(1); opacity: 0.5; }
+  .ckrow.dead .n { color: rgb(136,136,136); }
+  .ckx { appearance: none; border: 0; background: transparent; color: rgb(102,102,102); cursor: pointer; width: 24px; height: 24px;
+    border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; opacity: 0; transition: 0.15s; flex-shrink: 0; }
+  .ckx svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+  .ckrow:hover .ckx, .ckx:focus-visible { opacity: 1; }
+  .ckx:hover { background: rgba(236,59,71,0.12); color: rgb(208,96,112); }
+  .ckempty { color: rgb(85,85,85); font-size: 0.75rem; padding: 9px 12px; }
+  .free { appearance: none; background: none; border: 0; padding: 0; margin: -10px 0 -10px 4px; cursor: pointer;
+    vertical-align: middle; transition: transform 0.1s; }
+  .free img { display: block; height: 32px; width: auto; }
+  .free:hover { transform: rotate(-6deg) scale(1.06); }
+  .free:active { transform: scale(0.9); }
+  #changes-body { margin-top: 12px; max-height: 60vh; overflow-y: auto; scrollbar-width: thin; font-size: 0.8rem; line-height: 1.65; color: rgb(170,170,170); }
+  #changes-body .rel + .rel { border-top: 1px solid var(--card-border); margin-top: 12px; padding-top: 12px; }
+  #changes-body .tagl { font-weight: 600; color: #fff; font-size: 0.85rem; }
+  #changes-body .tagl span { color: var(--green); font-weight: 500; font-size: 0.7rem; margin-left: 6px; }
+  #changes-body p { margin: 6px 0 0; }
+  #changes-body .h { color: rgb(212,212,212); font-weight: 500; }
+  #changes-body ul { margin: 6px 0 0; }
+  @media (max-width: 600px) { .ckrow .tok { display: none; } }
   .bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; margin-top: 14px; }
   .bar div { height: 100%; width: 0; background: var(--green); transition: width 0.3s; }
   .counts { display: flex; gap: 14px; font-size: 0.75rem; color: rgb(136,136,136); margin-top: 8px; flex-wrap: wrap; }
@@ -252,7 +275,7 @@
     <div class="card hdr">
       <div class="titlebar">
         <img class="logo" src="/logo.png" alt="" />
-        <p class="title">rbx<b>yoinker</b> <span class="title-sub">Roblox asset downloader</span></p>
+        <p class="title">rbx<b>yoinker</b><button class="free" id="its-free" title="it's free"><img src="/its-free.png" alt="FREE" /></button> <span class="title-sub">Roblox asset downloader</span></p>
       </div>
       <div class="notice">
         <p>
@@ -299,6 +322,7 @@
           <div class="fbtns">
             <input id="version-input" type="text" inputmode="numeric" placeholder="Version (optional, latest if empty)" autocomplete="off" style="flex:1 1 0" />
             <button class="btn" id="play-btn" data-i="play" style="display:none">Play</button>
+            <button class="btn" id="copy-id-btn" data-i="copy" title="Copy as rbxassetid://">Copy ID</button>
             <button class="btn" id="download-btn" data-i="download">Download</button>
           </div>
           <audio id="player" controls style="display:none; width:100%; margin-top:12px; height:34px"></audio>
@@ -388,12 +412,15 @@
 
         <div class="sep"></div>
         <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:0 0 8px;">Cookies <span id="cookie-count"></span></label>
-        <textarea id="cookie-display" class="lines" wrap="off" readonly spellcheck="false" placeholder="No cookies yet. Paste one below."></textarea>
+        <div class="cklist" id="cookie-list"><div class="ckempty">Loading…</div></div>
         <div class="frow" style="margin-top:8px">
           <input id="cookies" type="password" placeholder="Paste a .ROBLOSECURITY to add" autocomplete="off" />
           <button class="btn" id="add-cookies" data-i="plus">Add</button>
         </div>
-        <div class="fbtns"><button class="btn" id="clear-cookies" data-i="trash">Remove all cookies</button></div>
+        <div class="fbtns">
+          <button class="btn" id="clear-dead" data-i="trash" style="display:none">Remove expired</button>
+          <button class="btn" id="clear-cookies" data-i="trash">Remove all</button>
+        </div>
         <p class="hint">Each cookie is a full login, kept only on this PC. Add more to spread bulk downloads across them and avoid rate limits. Paste several at once separated by spaces.</p>
         <div class="note" id="cookie-note"></div>
       </div>
@@ -426,7 +453,7 @@
       </div>
     </section>
 
-    <p class="foot">rbx<b>yoinker</b> <span id="app-version"></span> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · MIT · <a href="#" id="quit-link">Quit</a></p>
+    <p class="foot">rbx<b>yoinker</b> <span id="app-version"></span> by <a href="https://github.com/3vil17" target="_blank">3vil17</a> · <a href="https://github.com/3vil17/rbxyoinker" target="_blank">GitHub</a> · <a href="#" id="changes-link">Changelog</a> · MIT · <a href="#" id="quit-link">Quit</a></p>
   </div>
 
 <div class="modal-bg" id="forced" style="display:none; z-index:20">
@@ -442,6 +469,20 @@
       <a class="btn" id="forced-link" target="_blank" style="text-decoration:none; color:rgb(212,212,212); font-weight:500">Open on GitHub</a>
     </div>
     <div class="note" id="forced-note"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="changes" style="display:none">
+  <div class="card modal">
+    <div class="titlebar">
+      <img class="logo" src="/logo.png" alt="" />
+      <p class="title" style="margin:0; font-size:0.95rem; font-weight:600; color:#fff" id="changes-title">What's new</p>
+    </div>
+    <div id="changes-body"></div>
+    <div class="fbtns">
+      <button class="btn" id="changes-ok">Got it</button>
+      <a class="btn" href="https://github.com/3vil17/rbxyoinker/releases" target="_blank" style="text-decoration:none; color:rgb(212,212,212); font-weight:500">All releases</a>
+    </div>
   </div>
 </div>
 
@@ -489,6 +530,7 @@ const ICONS = {
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
   folder: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
@@ -550,8 +592,16 @@ async function loadRecent() {
   $("#recent-list").innerHTML = rows.map((h, i) =>
     '<div class="row"><div class="main"><div class="t">' + esc(h.name) + " <span>#" + h.id + "</span></div>" +
     '<div class="s">' + esc(h.type_label) + " · " + esc(fmtWhen(h.when)) + "</div></div>" +
-    '<button class="btn" data-r="' + i + '">' + svg("folder") + "</button></div>").join("");
+    '<button class="btn" data-c="' + i + '" title="Copy as rbxassetid://">' + svg("copy") + "</button>" +
+    '<button class="btn" data-r="' + i + '" title="Show in folder">' + svg("folder") + "</button></div>").join("");
   $("#recent-list").querySelectorAll("button[data-r]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: rows[b.dataset.r].path }); });
+  $("#recent-list").querySelectorAll("button[data-c]").forEach((b) => { b.onclick = () => copyAssetId(b, rows[b.dataset.c].id); });
+}
+async function copyAssetId(btn, id) {
+  try { await navigator.clipboard.writeText("rbxassetid://" + id); } catch (e) { return; }
+  const was = btn.innerHTML;
+  btn.innerHTML = btn.textContent.trim() ? "Copied" : '<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>';
+  setTimeout(() => { btn.innerHTML = was; }, 1200);
 }
 
 // ---- Download ----
@@ -605,6 +655,7 @@ $("#play-btn").onclick = () => {
 $("#fetch-btn").onclick = doFetch;
 $("#asset-input").addEventListener("keydown", (e) => { if (e.key === "Enter") doFetch(); });
 $("#download-btn").onclick = doDownload;
+$("#copy-id-btn").onclick = () => { if (current) copyAssetId($("#copy-id-btn"), current.id); };
 
 // ---- Settings ----
 async function loadSettings() {
@@ -619,16 +670,39 @@ async function loadCookies() {
   const res = await api("/api/accounts");
   const rows = res.ok ? res.data : [];
   $("#cookie-count").textContent = rows.length ? "(" + rows.length + " saved, " + rows.filter((a) => a.alive).length + " alive)" : "";
-  const disp = $("#cookie-display");
-  disp.value = rows.map((a) =>
-    "@" + (a.username || "unknown") + " (" + (a.preview || "") + ")" + (a.alive ? "" : "  - expired")).join(String.fromCharCode(10));
-  disp.rows = Math.max(2, rows.length);
+  $("#clear-dead").style.display = rows.some((a) => !a.alive) ? "" : "none";
+  const list = $("#cookie-list");
+  if (!rows.length) { list.innerHTML = '<div class="ckempty">No cookies yet. Paste one below.</div>'; return; }
+  list.innerHTML = rows.map((a, i) =>
+    '<div class="ckrow' + (a.alive ? "" : " dead") + '"><img src="' + esc(a.avatar || "/logo.png") + '" alt="" />' +
+    '<span class="n">' + (a.username ? "@" + esc(a.username) : "unknown") + "</span>" +
+    '<span class="live"><span class="dot ' + (a.alive ? "on" : "off") + '"></span>' + (a.alive ? "alive" : "expired") + "</span>" +
+    '<span class="tok">' + esc(a.preview || "") + "</span>" +
+    '<button class="ckx" data-k="' + i + '" title="Remove">' + svg("x") + "</button></div>").join("");
+  list.querySelectorAll("button[data-k]").forEach((b) => {
+    b.onclick = async () => {
+      const a = rows[b.dataset.k];
+      if (!confirm("Remove " + (a.username ? "@" + a.username : "this cookie") + "?")) return;
+      const res = await post("/api/cookies/remove", { index: Number(b.dataset.k) });
+      if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
+      showNote($("#cookie-note"), "ok", "Removed " + (a.username ? "@" + esc(a.username) : "the cookie") + "."); loadCookies();
+    };
+  });
 }
 $("#clear-cookies").onclick = async () => {
   if (!confirm("Remove all saved cookies?")) return;
   const res = await post("/api/credentials", { cookies: "" });
   if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
   showNote($("#cookie-note"), "ok", "Removed all cookies."); loadCookies();
+};
+$("#clear-dead").onclick = async () => {
+  const btn = $("#clear-dead"); btn.disabled = true;
+  showNote($("#cookie-note"), "info", "Rechecking and removing expired cookies…");
+  const res = await post("/api/cookies/remove-dead", {});
+  btn.disabled = false;
+  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
+  showNote($("#cookie-note"), res.data.removed ? "ok" : "info", res.data.removed ? "Removed " + res.data.removed + " expired cookie(s)." : "None of them are expired anymore.");
+  loadCookies();
 };
 $("#save-key").onclick = async () => {
   const k = $("#api-key").value;
@@ -892,9 +966,10 @@ function renderHistory() {
     '<div class="hist-item"><div class="hist-main">' +
     '<div class="hist-name">' + esc(h.name) + ' <span>#' + h.id + '</span></div>' +
     '<div class="hist-sub">' + esc(h.type_label) + " · " + esc(h.method) + " · " + esc(fmtWhen(h.when)) + '</div>' +
-    '</div><button class="btn" data-path="' + esc(h.path) + '">Show</button></div>'
+    '</div><button class="btn" data-copy="' + h.id + '" title="Copy as rbxassetid://">' + svg("copy") + '</button><button class="btn" data-path="' + esc(h.path) + '">Show</button></div>'
   ).join("");
   list.querySelectorAll("button[data-path]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: b.dataset.path }); });
+  list.querySelectorAll("button[data-copy]").forEach((b) => { b.onclick = () => copyAssetId(b, b.dataset.copy); });
 }
 $("#clear-hist").onclick = async () => { await post("/api/history/clear", {}); loadHistory(); };
 
@@ -905,14 +980,46 @@ api("/api/settings").then((res) => {
   if (!res.ok) return;
   $("#app-version").textContent = "v" + res.data.version;
   if (!res.data.accepted_terms) $("#terms").style.display = "flex";
+  else showChanges(false);
 });
+function mdLite(text) {
+  const inline = (x) => x.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const out = []; let inList = false;
+  for (const raw of esc(text).split(/\r?\n/)) {
+    const l = raw.trim();
+    if (/^[-*] /.test(l)) { if (!inList) { out.push("<ul>"); inList = true; } out.push("<li>" + inline(l.slice(2)) + "</li>"); continue; }
+    if (inList) { out.push("</ul>"); inList = false; }
+    if (!l) continue;
+    const h = l.match(/^#{1,6} (.*)/);
+    out.push(h ? '<p class="h">' + inline(h[1]) + "</p>" : "<p>" + inline(l) + "</p>");
+  }
+  if (inList) out.push("</ul>");
+  return out.join("");
+}
+async function showChanges(all) {
+  const res = await api("/api/changelog" + (all ? "?all=true" : ""));
+  if (!res.ok || !res.data.length) { if (all) window.open("https://github.com/3vil17/rbxyoinker/releases", "_blank"); return; }
+  const cur = $("#app-version").textContent;
+  $("#changes-title").textContent = all ? "Changelog" : "What's new";
+  $("#changes-body").innerHTML = res.data.map((r) =>
+    '<div class="rel"><div class="tagl">' + esc(r.tag) + ("v" + r.tag.replace(/^v/, "") === cur ? "<span>you have this</span>" : "") + "</div>" +
+    (mdLite(r.notes) || "<p>No notes for this one.</p>") + "</div>").join("");
+  $("#changes").style.display = "flex";
+}
+$("#changes-ok").onclick = () => { $("#changes").style.display = "none"; post("/api/changelog/seen", {}); };
+$("#changes-link").onclick = (e) => { e.preventDefault(); showChanges(true); };
+const ping = () => post("/api/ping", {}).catch(() => {});
+ping(); setInterval(ping, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
+const itsFree = new Audio("/its-free.mp3");
+$("#its-free").onclick = () => { itsFree.currentTime = 0; itsFree.play().catch(() => {}); };
 $("#quit-link").onclick = async (e) => {
   e.preventDefault();
   if (!confirm("Close rbxyoinker? Running downloads will stop.")) return;
   await post("/api/quit", {}).catch(() => {});
   document.body.innerHTML = '<div class="stack"><div class="card" style="text-align:center; font-size:0.85rem; color:rgb(170,170,170)">rbx<b style="color:var(--green); font-weight:600">yoinker</b> is closed. You can close this tab.</div></div>';
 };
-$("#terms-ok").onclick = async () => { await post("/api/accept", {}); $("#terms").style.display = "none"; };
+$("#terms-ok").onclick = async () => { await post("/api/accept", {}); post("/api/changelog/seen", {}); $("#terms").style.display = "none"; };
 const lastTab = store("tab");
 if (lastTab && lastTab !== "download") { const b = document.querySelector('nav button[data-tab="' + lastTab + '"]'); if (b) b.click(); }
 </script>

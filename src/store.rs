@@ -79,6 +79,8 @@ pub struct Settings {
     pub mesh_obj: bool,
     #[serde(default)]
     pub accepted_terms: bool,
+    #[serde(default)]
+    pub seen_version: String,
 }
 
 fn yes() -> bool {
@@ -92,6 +94,7 @@ impl Default for Settings {
             sort_by_type: false,
             mesh_obj: true,
             accepted_terms: false,
+            seen_version: String::new(),
         }
     }
 }

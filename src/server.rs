@@ -37,6 +37,27 @@ async fn quit_app() -> Json<Value> {
     ok(Value::Null)
 }
 
+// Open tabs ping every 20s. Background tabs can get their timers throttled to
+// once a minute, so the app only gives up after 3 quiet minutes, and never
+// while a bulk download is still going.
+const TAB_GONE_AFTER: std::time::Duration = std::time::Duration::from_secs(180);
+
+async fn quit_when_tab_closed(st: AppState) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        let quiet = st.last_ping.lock().unwrap_or_else(|e| e.into_inner()).elapsed();
+        let busy = st.bulk.lock().unwrap_or_else(|e| e.into_inner()).running;
+        if quiet > TAB_GONE_AFTER && !busy {
+            std::process::exit(0);
+        }
+    }
+}
+
+async fn ping(State(st): State<AppState>) -> Json<Value> {
+    *st.last_ping.lock().unwrap_or_else(|e| e.into_inner()) = std::time::Instant::now();
+    ok(Value::Null)
+}
+
 async fn accept_terms() -> Json<Value> {
     let mut s = store::load_settings();
     s.accepted_terms = true;
@@ -51,6 +72,7 @@ struct AppState {
     rb: Roblox,
     pool: Pool,
     bulk: Arc<Mutex<Bulk>>,
+    last_ping: Arc<Mutex<std::time::Instant>>,
 }
 
 #[derive(Default)]
@@ -105,12 +127,19 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         let _ = open::that(&url);
         return Ok(());
     }
-    let state = AppState { rb: Roblox::new(), pool: Pool::default(), bulk: Arc::default() };
+    let state = AppState {
+        rb: Roblox::new(),
+        pool: Pool::default(),
+        bulk: Arc::default(),
+        last_ping: Arc::new(Mutex::new(std::time::Instant::now())),
+    };
     state.pool.reload(&state.rb).await;
 
     let app = Router::new()
         .route("/", get(index))
         .route("/logo.png", get(logo))
+        .route("/its-free.mp3", get(its_free))
+        .route("/its-free.png", get(its_free_badge))
         .route("/api/lookup", get(lookup))
         .route("/api/download", post(download_asset))
         .route("/api/raw", get(raw_asset))
@@ -120,6 +149,7 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/accounts/refresh", post(refresh_accounts))
         .route("/api/cookies/add", post(cookies_add))
         .route("/api/cookies/remove", post(cookies_remove))
+        .route("/api/cookies/remove-dead", post(cookies_remove_dead))
         .route("/api/bulk", post(bulk_start))
         .route("/api/bulk/status", get(bulk_status))
         .route("/api/bulk/cancel", post(bulk_cancel))
@@ -131,13 +161,17 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/update", get(update_check))
         .route("/api/accept", post(accept_terms))
         .route("/api/quit", post(quit_app))
+        .route("/api/ping", post(ping))
         .route("/api/update/install", post(install_update))
+        .route("/api/changelog", get(changelog))
+        .route("/api/changelog/seen", post(changelog_seen))
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
         .route("/api/reveal", post(reveal))
         .route("/api/pick-folder", post(pick_folder))
         .layer(axum::middleware::from_fn(same_site_only))
-        .with_state(state);
+        .with_state(state.clone());
+    tokio::spawn(quit_when_tab_closed(state));
 
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
         Ok(l) => l,
@@ -163,6 +197,14 @@ async fn index() -> Html<&'static str> {
 
 async fn logo() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "image/png")], &include_bytes!("web/logo.png")[..])
+}
+
+async fn its_free() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "audio/mpeg")], &include_bytes!("web/its-free.mp3")[..])
+}
+
+async fn its_free_badge() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/png")], &include_bytes!("web/its-free.png")[..])
 }
 
 fn ok(data: Value) -> Json<Value> {
@@ -404,6 +446,22 @@ async fn cookies_remove(State(st): State<AppState>, Json(body): Json<RemoveCooki
     ok(json!({ "count": list.len() }))
 }
 
+async fn cookies_remove_dead(State(st): State<AppState>) -> Json<Value> {
+    st.pool.reload(&st.rb).await;
+    let dead = st.pool.dead_cookies();
+    let mut list = store::load_cookies();
+    let before = list.len();
+    list.retain(|c| !dead.contains(c));
+    let removed = before - list.len();
+    if removed > 0 {
+        if let Err(e) = store::save_cookies(&list) {
+            return fail(e.to_string());
+        }
+        st.pool.reload(&st.rb).await;
+    }
+    ok(json!({ "removed": removed, "count": list.len() }))
+}
+
 async fn accounts(State(st): State<AppState>) -> Json<Value> {
     ok(st.pool.snapshot())
 }
@@ -444,6 +502,54 @@ async fn update_check(State(st): State<AppState>) -> Json<Value> {
         "can_install": latest.exe_url.is_some(),
         "current": current,
     }))
+}
+
+#[derive(Deserialize)]
+struct ChangelogQuery {
+    #[serde(default)]
+    all: bool,
+}
+
+// Without `all` this is only what changed since the last version the user saw.
+// Someone who already used an older build (but never had this setting) gets
+// just the current release's notes, a brand new install gets nothing.
+async fn changelog(State(st): State<AppState>, Query(q): Query<ChangelogQuery>) -> Json<Value> {
+    let current = env!("CARGO_PKG_VERSION");
+    let mut s = store::load_settings();
+    let now = version_tuple(current);
+    let since = if q.all {
+        Vec::new()
+    } else if !s.seen_version.is_empty() {
+        version_tuple(&s.seen_version)
+    } else if s.accepted_terms {
+        Vec::new()
+    } else {
+        s.seen_version = current.to_string();
+        let _ = store::save_settings(&s);
+        return ok(json!([]));
+    };
+    let only_current = !q.all && s.seen_version.is_empty();
+    let Some(mut releases) = st.rb.releases().await else {
+        return ok(json!([]));
+    };
+    releases.retain(|r| {
+        let v = version_tuple(&r.tag);
+        if only_current { v == now } else { v <= now && v > since }
+    });
+    releases.sort_by_key(|r| std::cmp::Reverse(version_tuple(&r.tag)));
+    ok(json!(releases
+        .iter()
+        .map(|r| json!({ "tag": r.tag, "url": r.url, "notes": clean_notes(&r.notes) }))
+        .collect::<Vec<_>>()))
+}
+
+async fn changelog_seen() -> Json<Value> {
+    let mut s = store::load_settings();
+    s.seen_version = env!("CARGO_PKG_VERSION").to_string();
+    match store::save_settings(&s) {
+        Ok(_) => ok(Value::Null),
+        Err(e) => fail(e.to_string()),
+    }
 }
 
 // A running exe can't be overwritten on Windows, but it can be renamed. So the

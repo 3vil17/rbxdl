@@ -95,6 +95,10 @@ impl Pool {
         st.cursor = 0;
     }
 
+    pub fn dead_cookies(&self) -> Vec<String> {
+        self.lock().accounts.iter().filter(|a| !a.alive).map(|a| a.cookie.clone()).collect()
+    }
+
     pub fn total_count(&self) -> usize {
         self.lock().accounts.len()
     }
