@@ -107,6 +107,16 @@
   .st.have { background: rgba(255,255,255,0.05); color: rgb(59,186,87); }
   #update-line { margin-top: 2px; }
   .badge.mod { background: rgba(236,59,71,0.12); color: rgb(208,96,112); margin-left: 4px; }
+  .badge.acc { margin-left: 4px; }
+  .badge.acc.pub { background: rgba(59,234,87,0.1); color: rgb(59,186,87); }
+  .seg { display: inline-flex; margin-top: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden; }
+  .seg button { appearance: none; font-family: var(--font-sans); font-size: 12px; padding: 5px 12px; cursor: pointer; border: 0;
+    background: transparent; color: rgb(144,144,144); transition: 0.2s; }
+  .seg button + button { border-left: 1px solid rgba(255,255,255,0.1); }
+  .seg button.on { background: rgba(255,255,255,0.1); color: #fff; }
+  .seg button span { color: rgb(102,102,102); margin-left: 4px; }
+  .tag { font-size: 0.62rem; color: rgb(102,102,102); margin-left: 6px; }
+  .tag.pub { color: rgb(59,186,87); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .chips:empty { display: none; }
   .chip { appearance: none; font-family: var(--font-sans); font-size: 12px; padding: 4px 10px; border-radius: 99px; cursor: pointer;
@@ -268,6 +278,7 @@
               <div class="asset-name" id="r-name"></div>
               <div class="asset-meta" id="r-meta"></div>
               <span class="badge" id="r-type"></span>
+              <span class="badge acc" id="r-acc" style="display:none"></span>
               <span class="badge mod" id="r-mod" style="display:none"></span>
             </div>
           </div>
@@ -311,6 +322,9 @@
           <span><b id="bulk-count">0</b> / 500 ids</span>
           <span id="preview-state"></span>
           <label class="check"><input type="checkbox" id="skip-existing" checked /> Skip ones I already have</label>
+        </div>
+        <div class="seg" id="access-seg" style="display:none">
+          <button data-a="Both" class="on">Both</button><button data-a="Public">Public</button><button data-a="Private">Private</button>
         </div>
         <div class="chips" id="type-chips"></div>
         <input type="file" id="scan-file" accept=".rbxl,.rbxm,.rbxlx,.rbxmx" style="display:none" />
@@ -483,6 +497,8 @@ async function doFetch() {
   $("#r-name").textContent = res.data.name;
   $("#r-meta").innerHTML = res.data.creator_name ? "by " + esc(res.data.creator_name) + " · #" + res.data.id : "#" + res.data.id;
   $("#r-type").textContent = res.data.type_label;
+  const acc = $("#r-acc"); acc.style.display = res.data.access ? "" : "none";
+  acc.textContent = res.data.access || ""; acc.className = "badge acc" + (res.data.access === "Public" ? " pub" : "");
   $("#r-mod").style.display = res.data.moderation ? "" : "none";
   $("#r-mod").textContent = res.data.moderation || "";
   $("#play-btn").style.display = res.data.type_label === "Audio" ? "" : "none";
@@ -583,11 +599,17 @@ $("#browse-dir").onclick = async () => {
 function splitIds(text) { return text.split(/[\s,;]+/).map((s) => (s.match(/\d+/g) || []).sort((a, b) => b.length - a.length)[0]).filter(Boolean); }
 let preview = null, previewTimer = null, previewSeq = 0;
 const typeOff = new Set();
+let accessPick = "Both";
+const accessOf = {};
+const picked = (x) => !typeOff.has(x.type) && (accessPick === "Both" || x.access === accessPick);
+document.querySelectorAll("#access-seg button").forEach((b) => {
+  b.onclick = () => { accessPick = b.dataset.a; renderChips(); };
+});
 const thumbs = {};
 $("#bulk-input").addEventListener("input", () => {
   const n = new Set(splitIds($("#bulk-input").value)).size;
   $("#bulk-count").textContent = n; $("#bulk-count").style.color = n > 500 ? "var(--red)" : "";
-  preview = null; $("#type-chips").innerHTML = ""; $("#preview-state").textContent = "";
+  preview = null; $("#type-chips").innerHTML = ""; $("#preview-state").textContent = ""; $("#access-seg").style.display = "none";
   clearTimeout(previewTimer);
   if (n && n <= 500) previewTimer = setTimeout(loadPreview, 700);
 });
@@ -601,7 +623,7 @@ async function loadPreview() {
   $("#preview-state").textContent = "";
   if (!res.ok) return null;
   preview = res.data;
-  preview.forEach((x) => { if (x.thumb) thumbs[x.id] = x.thumb; });
+  preview.forEach((x) => { if (x.thumb) thumbs[x.id] = x.thumb; accessOf[x.id] = x.access; });
   renderChips();
   return preview;
 }
@@ -614,8 +636,15 @@ function renderChips() {
   $("#type-chips").querySelectorAll(".chip").forEach((c) => {
     c.onclick = () => { const t = c.dataset.t; typeOff.has(t) ? typeOff.delete(t) : typeOff.add(t); renderChips(); };
   });
-  const picked = (preview || []).filter((x) => !typeOff.has(x.type)).length;
-  $("#bulk-count").textContent = picked;
+  const acc = { Public: 0, Private: 0 };
+  (preview || []).forEach((x) => { acc[x.access] = (acc[x.access] || 0) + 1; });
+  $("#access-seg").style.display = preview && preview.length ? "" : "none";
+  document.querySelectorAll("#access-seg button").forEach((b) => {
+    const a = b.dataset.a;
+    b.className = a === accessPick ? "on" : "";
+    b.innerHTML = a + "<span>" + (a === "Both" ? acc.Public + acc.Private : acc[a]) + "</span>";
+  });
+  $("#bulk-count").textContent = (preview || []).filter(picked).length;
 }
 let bulkTimer = null;
 function renderBulk(d) {
@@ -626,7 +655,8 @@ function renderBulk(d) {
   $("#bulk-counts").innerHTML = "<span><b>" + done + "</b> / " + it.length + " done</span><span><b>" + c.ok + "</b> saved</span>" + (c.have ? "<span><b>" + c.have + "</b> already had</span>" : "") + "<span><b>" + c.error + "</b> failed</span>" +
     (c.waiting ? "<span><b>" + c.waiting + "</b> waiting on rate limit</span>" : "") + (c.skipped ? "<span><b>" + c.skipped + "</b> skipped</span>" : "");
   $("#bulk-rows").innerHTML = it.map((x, i) =>
-    '<div class="row">' + (thumbs[x.id] ? '<img class="rthumb" loading="lazy" src="' + esc(thumbs[x.id]) + '" alt="" />' : '<span class="rthumb"></span>') + '<div class="main"><div class="t">' + esc(x.name || "asset") + " <span>#" + x.id + "</span></div>" +
+    '<div class="row">' + (thumbs[x.id] ? '<img class="rthumb" loading="lazy" src="' + esc(thumbs[x.id]) + '" alt="" />' : '<span class="rthumb"></span>') + '<div class="main"><div class="t">' + esc(x.name || "asset") + " <span>#" + x.id + "</span>" +
+    (accessOf[x.id] ? '<span class="tag' + (accessOf[x.id] === "Public" ? " pub" : "") + '">' + accessOf[x.id] + "</span>" : "") + "</div>" +
     (x.error ? '<div class="s err">' + errHtml(x.error) + "</div>" : x.method ? '<div class="s">' + esc(x.method) + "</div>" : "") +
     '</div><span class="st ' + x.state + '">' + x.state + "</span>" +
     (x.path ? '<button class="btn" data-p="' + i + '">' + svg("folder") + "</button>" : "") + "</div>").join("");
@@ -667,8 +697,8 @@ $("#bulk-start").onclick = async () => {
   hideNote($("#bulk-note"));
   clearTimeout(previewTimer);
   const p = preview || await loadPreview();
-  const ids = p ? p.filter((x) => !typeOff.has(x.type)).map((x) => x.id) : splitIds($("#bulk-input").value);
-  if (!ids.length) { showNote($("#bulk-note"), "err", "Every type is switched off."); return; }
+  const ids = p ? p.filter(picked).map((x) => x.id) : splitIds($("#bulk-input").value);
+  if (!ids.length) { showNote($("#bulk-note"), "err", "Nothing matches the current filters."); return; }
   const res = await post("/api/bulk", { ids, skip_existing: $("#skip-existing").checked });
   if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
   showNote($("#bulk-note"), "info", "Started " + res.data.total + " assets with " + res.data.workers + " workers.");

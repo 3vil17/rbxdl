@@ -188,6 +188,27 @@ impl Roblox {
         (t["imageUrl"].as_str().map(String::from), t["state"].as_str().map(String::from))
     }
 
+    pub async fn public_assets(&self, ids: &[i64]) -> std::collections::HashSet<i64> {
+        let mut out = std::collections::HashSet::new();
+        for chunk in ids.chunks(50) {
+            let list: Vec<String> = chunk.iter().map(|i| i.to_string()).collect();
+            let url = format!(
+                "https://apis.roblox.com/toolbox-service/v1/items/details?assetIds={}",
+                list.join(",")
+            );
+            let Ok(resp) = self.http.get(&url).send().await else { continue };
+            let Ok(v) = resp.json::<Value>().await else { continue };
+            for it in v["data"].as_array().into_iter().flatten() {
+                if it["fiatProduct"]["published"].as_bool() == Some(true) {
+                    if let Some(id) = it["asset"]["id"].as_i64() {
+                        out.insert(id);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     pub fn cached_details(&self, id: i64) -> Option<AssetDetails> {
         self.cache().details.get(&id).cloned()
     }

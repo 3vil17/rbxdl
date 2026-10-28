@@ -154,6 +154,7 @@ async fn lookup(State(st): State<AppState>, Query(q): Query<LookupQ>) -> Json<Va
     match st.rb.asset_details(id).await {
         Ok(d) => {
             let (thumb, state) = st.rb.thumbnail(id).await;
+            let public = st.rb.public_assets(&[id]).await.contains(&id);
             let moderation = if d.name == "[ Content Deleted ]" || state.as_deref() == Some("Blocked") {
                 Some("Moderated")
             } else if matches!(state.as_deref(), Some("InReview") | Some("Pending")) {
@@ -163,6 +164,7 @@ async fn lookup(State(st): State<AppState>, Query(q): Query<LookupQ>) -> Json<Va
             };
             ok(json!({
                 "moderation": moderation,
+                "access": if public { "Public" } else { "Private" },
                 "id": d.id,
                 "name": d.name,
                 "description": d.description,
@@ -506,6 +508,7 @@ async fn bulk_preview(State(st): State<AppState>, Json(body): Json<PreviewBody>)
         }
     }
     let thumbs = st.rb.thumbnails(&ids).await;
+    let public = st.rb.public_assets(&ids).await;
     let items: Vec<Value> = ids
         .iter()
         .map(|id| {
@@ -515,6 +518,7 @@ async fn bulk_preview(State(st): State<AppState>, Json(body): Json<PreviewBody>)
                 "name": d.as_ref().map(|d| d.name.clone()),
                 "type": d.map_or("Unknown", |d| crate::convert::type_label(d.asset_type_id)),
                 "thumb": thumbs.get(id),
+                "access": if public.contains(id) { "Public" } else { "Private" },
             })
         })
         .collect();
