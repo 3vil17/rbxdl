@@ -216,6 +216,12 @@
   .pair-links { font-size: 0.78rem; color: rgb(144,144,144); margin-top: 4px; }
   #st-nocode { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .st-on { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.88rem; color: rgb(224,224,224); }
+  .scan-pick { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--card-border); }
+  .scan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 0.8rem; color: rgb(212,212,212); }
+  #scan-svcs .chip { display: inline-flex; align-items: center; gap: 6px; }
+  #scan-svcs .chip img, #scan-svcs .chip svg { width: 16px; height: 16px; flex-shrink: 0; }
+  #scan-svcs .chip svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #scan-svcs .chip.off img { opacity: 0.35; }
   .pl-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 14px;
     padding-top: 12px; border-top: 1px solid var(--card-border); font-size: 0.75rem; color: rgb(144,144,144); }
   .st.ready { color: rgb(59,186,87); }
@@ -430,6 +436,13 @@
             <div class="pair-sub">Open the plugin in Studio, then get a code and type it in.</div>
             <button class="btn" id="st-code-btn" data-i="key">Get a code</button>
           </div>
+        </div>
+        <div class="scan-pick">
+          <div class="scan-head">
+            <span>What the plugin scans</span>
+            <label class="check"><input type="checkbox" id="scan-core" /> Skip CoreGui</label>
+          </div>
+          <div class="chips" id="scan-svcs"></div>
         </div>
         <div class="pl-line">
           <span id="pl-state">Plugin</span>
@@ -695,7 +708,7 @@ document.querySelectorAll("nav button").forEach((b) => {
     store("tab", tab);
     ["download", "bulk", "migrate", "accounts", "settings", "history"].forEach((t) => { $("#tab-" + t).style.display = t === tab ? "flex" : "none"; });
     clearInterval(accTimer); clearInterval(mgTimer);
-    if (tab === "migrate") { loadTargets(); loadPluginState(); pollMigrate(); mgTimer = setInterval(pollMigrate, 1500); }
+    if (tab === "migrate") { loadTargets(); loadPluginState(); loadScanPick(); pollMigrate(); mgTimer = setInterval(pollMigrate, 1500); }
     if (tab === "settings") loadSettings();
     if (tab === "history") loadHistory();
     if (tab === "accounts") { loadAccounts(); accTimer = setInterval(loadAccounts, 2000); }
@@ -893,6 +906,27 @@ $("#st-copy").onclick = async (e) => {
   if (!stCode) return;
   try { await navigator.clipboard.writeText(stCode); $("#st-copy").textContent = "Copied"; setTimeout(() => { $("#st-copy").textContent = "Copy"; }, 1200); } catch (err) {}
 };
+const SVC_ICON = "https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/studio-svg-textures/Shared/InsertableObjects/Dark/Standard/";
+let scanAll = [], scanOn = new Set();
+async function loadScanPick() {
+  const res = await api("/api/settings"); if (!res.ok) return;
+  scanAll = res.data.scan_all || []; scanOn = new Set(res.data.scan_services || []);
+  $("#scan-core").checked = !!res.data.scan_skip_coregui;
+  renderScanPick();
+}
+function renderScanPick() {
+  $("#scan-svcs").innerHTML = scanAll.map((n) => '<button class="chip' + (scanOn.has(n) ? "" : " off") + '" data-s="' + esc(n) + '" title="' +
+    (n === "Other" ? "Every other service in the place" : esc(n)) + '">' +
+    (n === "Other" ? svg("layers") : '<img src="' + SVC_ICON + encodeURIComponent(n) + '@2x.png" alt="" onerror="this.remove()" />') +
+    esc(n === "Other" ? "Everything else" : n) + "</button>").join("");
+  $("#scan-svcs").querySelectorAll(".chip").forEach((c) => {
+    c.onclick = () => {
+      const n = c.dataset.s; scanOn.has(n) ? scanOn.delete(n) : scanOn.add(n);
+      renderScanPick(); post("/api/settings", { scan_services: [...scanOn] });
+    };
+  });
+}
+$("#scan-core").onchange = () => post("/api/settings", { scan_skip_coregui: $("#scan-core").checked });
 async function loadPluginState() {
   const res = await api("/api/studio/plugin"); if (!res.ok) return;
   const p = res.data;

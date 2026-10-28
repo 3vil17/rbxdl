@@ -87,12 +87,40 @@ pub struct Settings {
     pub images_png: bool,
     #[serde(default)]
     pub plugins_dir: String,
+    #[serde(default = "default_scan")]
+    pub scan_services: Vec<String>,
+    #[serde(default = "yes")]
+    pub scan_skip_coregui: bool,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{name}_{id}";
 
 fn default_template() -> String {
     DEFAULT_TEMPLATE.into()
+}
+
+/// Places the Studio plugin can scan. "Other" covers every service not
+/// listed here, CoreGui has its own switch.
+pub const SCAN_SERVICES: &[&str] = &[
+    "Workspace",
+    "Lighting",
+    "MaterialService",
+    "ReplicatedFirst",
+    "ReplicatedStorage",
+    "ServerScriptService",
+    "ServerStorage",
+    "StarterGui",
+    "StarterPack",
+    "StarterPlayer",
+    "SoundService",
+    "Teams",
+    "TextChatService",
+    "Chat",
+    "Other",
+];
+
+fn default_scan() -> Vec<String> {
+    SCAN_SERVICES.iter().map(|s| s.to_string()).collect()
 }
 
 fn yes() -> bool {
@@ -110,6 +138,8 @@ impl Default for Settings {
             name_template: default_template(),
             images_png: true,
             plugins_dir: String::new(),
+            scan_services: default_scan(),
+            scan_skip_coregui: true,
         }
     }
 }

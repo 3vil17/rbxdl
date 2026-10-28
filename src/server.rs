@@ -170,6 +170,7 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/studio/pick-plugins", post(pick_plugins_dir))
         .route("/api/studio/submit", post(studio_submit))
         .route("/api/studio/job", get(studio_job))
+        .route("/api/studio/scan", get(studio_scan))
         .route("/api/migrate/job", get(migrate_job))
         .route("/api/migrate/targets", get(migrate_targets))
         .route("/api/migrate/start", post(migrate_start))
@@ -356,6 +357,9 @@ async fn get_settings() -> Json<Value> {
         "name_template": s.name_template,
         "images_png": s.images_png,
         "accepted_terms": s.accepted_terms,
+        "scan_services": s.scan_services,
+        "scan_all": store::SCAN_SERVICES,
+        "scan_skip_coregui": s.scan_skip_coregui,
         "version": env!("CARGO_PKG_VERSION"),
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
@@ -369,6 +373,8 @@ struct SettingsBody {
     mesh_obj: Option<bool>,
     name_template: Option<String>,
     images_png: Option<bool>,
+    scan_services: Option<Vec<String>>,
+    scan_skip_coregui: Option<bool>,
 }
 
 async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
@@ -395,6 +401,12 @@ async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
     }
     if let Some(png) = body.images_png {
         s.images_png = png;
+    }
+    if let Some(list) = body.scan_services {
+        s.scan_services = store::SCAN_SERVICES.iter().filter(|n| list.iter().any(|x| x == *n)).map(|n| n.to_string()).collect();
+    }
+    if let Some(skip) = body.scan_skip_coregui {
+        s.scan_skip_coregui = skip;
     }
     match store::save_settings(&s) {
         Ok(_) => ok(json!({
@@ -914,6 +926,19 @@ async fn studio_submit(
     crate::studio::lock(&st.studio).place = place;
     tokio::spawn(crate::migrate::check(st.rb.clone(), st.pool.clone(), st.migrate.clone()));
     ok(json!({ "count": ids.len(), "run_id": run_id })).into_response()
+}
+
+async fn studio_scan(State(st): State<AppState>, headers: axum::http::HeaderMap) -> axum::response::Response {
+    if !crate::studio::lock(&st.studio).check(studio_token(&headers).as_deref()) {
+        return unpaired();
+    }
+    let s = store::load_settings();
+    ok(json!({
+        "services": s.scan_services,
+        "all": store::SCAN_SERVICES,
+        "skip_coregui": s.scan_skip_coregui,
+    }))
+    .into_response()
 }
 
 async fn studio_job(State(st): State<AppState>, headers: axum::http::HeaderMap) -> axum::response::Response {
