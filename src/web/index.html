@@ -217,6 +217,18 @@
   .pair-links { font-size: 0.78rem; color: rgb(144,144,144); margin-top: 4px; }
   #st-nocode { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .st-on { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.88rem; color: rgb(224,224,224); }
+  .script-mode { margin-top: 14px; }
+  .review { margin-top: 14px; padding: 12px 14px; border-radius: 6px; background: rgb(22,22,22); border: 1px solid rgba(255,255,255,0.09); }
+  .review-title { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; color: #fff; }
+  .review-title svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .rv-row { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-bottom: 1px solid var(--card-border); cursor: pointer; font-size: 0.78rem; }
+  .rv-row:last-child { border-bottom: 0; }
+  .rv-row input { accent-color: var(--green); margin: 9px 0 0; flex-shrink: 0; cursor: pointer; }
+  .rv-row .main { flex: 1; min-width: 0; }
+  .rv-code { margin-top: 5px; padding: 5px 8px; border-radius: 4px; background: rgba(255,255,255,0.04); font-family: monospace; font-size: 0.72rem;
+    color: rgb(170,170,170); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .rv-code b { color: var(--green); font-weight: 600; }
+  .rv-where { margin-top: 3px; font-size: 0.68rem; color: rgb(110,110,110); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scan-pick { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--card-border); }
   .scan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 0.8rem; color: rgb(212,212,212); }
   #scan-svcs .chip { display: inline-flex; align-items: center; gap: 6px; }
@@ -271,7 +283,7 @@
   .note b { color: rgb(224, 224, 224); font-weight: 500; }
   .note .acts { margin-top: 9px; }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-  .dot.on { background: var(--green); } .dot.off { background: var(--red); }
+  .dot.on { background: var(--green); } .dot.off { background: var(--red); } .dot.idle { background: rgb(110,110,110); }
 
   .usage { font-size: 0.83rem; line-height: 1.7; color: rgb(170, 170, 170); }
   .usage ul { margin: 0; padding-left: 18px; }
@@ -424,7 +436,7 @@
       <div class="card">
         <div id="st-on" class="st-on" style="display:none">
           <div id="st-state"></div>
-          <a href="#" id="st-off">Disconnect</a>
+          <a href="#" id="st-off">Unpair</a>
         </div>
         <div id="st-pair" class="pair">
           <h2 class="sect" style="margin:0 0 4px"><i data-i="plug"></i>Connect Studio</h2>
@@ -444,6 +456,13 @@
             <label class="check"><input type="checkbox" id="scan-core" /> Skip CoreGui</label>
           </div>
           <div class="chips" id="scan-svcs"></div>
+          <div class="script-mode">
+            <div class="scan-head">
+              <span>Asset ids inside scripts</span>
+              <div class="seg" id="script-mode" style="margin:0"><button data-m="off">Ignore</button><button data-m="ask">Ask me</button><button data-m="auto">Move them</button></div>
+            </div>
+            <p class="hint" id="script-mode-hint" style="margin:8px 0 0"></p>
+          </div>
         </div>
         <div class="pl-line">
           <span id="pl-state">Plugin</span>
@@ -467,6 +486,14 @@
         </div>
         <p class="hint" id="mg-source"></p>
         <div class="chips" id="mg-kinds"></div>
+        <div class="review" id="mg-review" style="display:none">
+          <div class="section-head">
+            <div class="review-title"><i data-i="code"></i><span id="mg-rv-title">Found only in scripts</span></div>
+            <div class="pair-links" style="margin:0"><a href="#" id="mg-rv-all">Select all</a> · <a href="#" id="mg-rv-none">None</a></div>
+          </div>
+          <p class="hint" style="margin:6px 0 0">These numbers sit in scripts and are real assets on Roblox, but a script can use a number for something else too. Tick the ones that really are assets, the rest stay as they are.</p>
+          <div class="rows" id="mg-rv-rows" style="max-height:340px"></div>
+        </div>
         <div class="sep"></div>
         <div class="fgrid">
           <label id="mg-acc-label">Account</label>
@@ -508,16 +535,6 @@
     <section id="tab-settings" style="display:none; flex-direction:column; gap:10px;">
       <div class="card">
         <h2 class="sect"><i data-i="key"></i>Credentials</h2>
-        <div class="fgrid">
-          <label>API key</label>
-          <div class="frow">
-            <input id="api-key" type="password" placeholder="Open Cloud key" autocomplete="off" />
-            <button class="btn" id="save-key" data-i="save">Save</button>
-          </div>
-        </div>
-        <p class="hint">Open Cloud key, scope <code>legacy-asset:manage</code>. Leave blank to keep what's saved.</p>
-
-        <div class="sep"></div>
         <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:0 0 8px;">Cookies <span id="cookie-count"></span></label>
         <div class="cklist" id="cookie-list"><div class="ckempty">Loading…</div></div>
         <div class="frow" style="margin-top:8px">
@@ -530,6 +547,25 @@
         </div>
         <p class="hint">Each cookie is a full login, kept only on this PC. Add more to spread bulk downloads across them and avoid rate limits. Paste several at once separated by spaces.</p>
         <div class="note" id="cookie-note"></div>
+
+        <div class="sep"></div>
+        <div id="key-saved" class="section-head" style="display:none">
+          <span style="font-size:0.8rem; color:rgb(212,212,212)"><span class="dot on"></span>Open Cloud API key saved</span>
+          <button class="btn" id="remove-key" data-i="trash">Remove</button>
+        </div>
+        <a href="#" id="key-show" style="font-size:0.78rem">Use an Open Cloud API key (not recommended)</a>
+        <div id="key-form" style="display:none">
+          <div class="note show err" style="margin-top:0"><b>Not recommended.</b> Cookies reach far more assets than an API key, so with a cookie added it rarely helps. The key also keeps working until you delete it on create.roblox.com, so if it ever leaks anyone can use it on your account.</div>
+          <div class="fgrid" style="margin-top:12px">
+            <label>API key</label>
+            <div class="frow">
+              <input id="api-key" type="password" placeholder="Open Cloud key" autocomplete="off" />
+              <button class="btn" id="save-key" data-i="save">Save</button>
+            </div>
+          </div>
+          <p class="hint">Scope <code>legacy-asset:manage</code>.</p>
+        </div>
+        <div class="note" id="key-note"></div>
       </div>
 
       <div class="card">
@@ -634,6 +670,7 @@ function esc(s) {
 // Lucide icons (ISC license), inlined
 const ICONS = {
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -813,7 +850,9 @@ async function loadSettings() {
   $("#images-png").checked = !!res.data.images_png;
   $("#name-tpl").value = res.data.name_template || "";
   namePreview();
-  $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
+  $("#key-saved").style.display = res.data.has_key ? "" : "none";
+  $("#key-show").style.display = res.data.has_key ? "none" : "";
+  if (res.data.has_key) $("#key-form").style.display = "none";
   loadCookies();
 }
 async function loadCookies() {
@@ -854,12 +893,19 @@ $("#clear-dead").onclick = async () => {
   showNote($("#cookie-note"), res.data.removed ? "ok" : "info", res.data.removed ? "Removed " + res.data.removed + " expired cookie(s)." : "None of them are expired anymore.");
   loadCookies();
 };
+$("#key-show").onclick = (e) => { e.preventDefault(); $("#key-show").style.display = "none"; $("#key-form").style.display = ""; $("#api-key").focus(); };
 $("#save-key").onclick = async () => {
-  const k = $("#api-key").value;
-  if (k === "") { showNote($("#cookie-note"), "info", "Nothing to save, the API key field is empty."); return; }
+  const k = $("#api-key").value.trim();
+  if (k === "") { showNote($("#key-note"), "info", "Paste the key first."); return; }
   const res = await post("/api/credentials", { api_key: k });
-  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
-  $("#api-key").value = ""; showNote($("#cookie-note"), "ok", "API key saved."); loadSettings();
+  if (!res.ok) { showNote($("#key-note"), "err", esc(res.error)); return; }
+  $("#api-key").value = ""; showNote($("#key-note"), "ok", "API key saved."); loadSettings();
+};
+$("#remove-key").onclick = async () => {
+  if (!confirm("Remove the saved API key from this PC?")) return;
+  const res = await post("/api/credentials", { api_key: "" });
+  if (!res.ok) { showNote($("#key-note"), "err", esc(res.error)); return; }
+  showNote($("#key-note"), "ok", "API key removed. It still exists on create.roblox.com, delete it there too if you don't need it."); loadSettings();
 };
 $("#add-cookies").onclick = async () => {
   const c = $("#cookies").value.trim();
@@ -875,6 +921,8 @@ $("#add-cookies").onclick = async () => {
 // ---- Migrate ----
 let mgTargets = [], mgJob = null, mgMode = "swap";
 const mgKindsOff = new Set();
+const mgScriptPicked = new Set();
+let scriptMode = "off", mgPreviewKey = "";
 const mgThumbs = {};
 const KIND_NAMES = { Audio: "Sounds", Image: "Images", Mesh: "Meshes", Animation: "Animations" };
 async function pollStudio() {
@@ -884,8 +932,9 @@ async function pollStudio() {
   const live = s.connected && s.seen_ago != null && s.seen_ago < 15;
   $("#st-on").style.display = s.connected ? "" : "none";
   $("#st-pair").style.display = s.connected ? "none" : "";
-  $("#st-state").innerHTML = '<span class="dot ' + (live ? "on" : "off") + '"></span>' +
-    (live ? "Studio connected" : "Paired, Studio isn't talking right now") + (s.place ? " · <b>" + esc(s.place) + "</b>" : "");
+  $("#st-state").innerHTML = '<span class="dot ' + (live ? "on" : "idle") + '"></span>' +
+    (live ? "Studio connected" + (s.place ? " · <b>" + esc(s.place) + "</b>" : "")
+      : 'Paired with Studio <span style="color:rgb(120,120,120)">· open Studio and it connects by itself</span>');
   stCode = s.code || "";
   $("#st-code").style.display = s.code ? "" : "none";
   $("#st-nocode").style.display = s.code ? "none" : "";
@@ -913,6 +962,7 @@ async function loadScanPick() {
   const res = await api("/api/settings"); if (!res.ok) return;
   scanAll = res.data.scan_all || []; scanOn = new Set(res.data.scan_services || []);
   $("#scan-core").checked = !!res.data.scan_skip_coregui;
+  setScriptMode(res.data.script_ids || "off", false);
   renderScanPick();
 }
 function renderScanPick() {
@@ -928,6 +978,19 @@ function renderScanPick() {
   });
 }
 $("#scan-core").onchange = () => post("/api/settings", { scan_skip_coregui: $("#scan-core").checked });
+const SCRIPT_MODE_HINTS = {
+  off: "Scripts aren't read. Only ids set in properties (SoundId, Image, MeshId and so on) get moved.",
+  ask: "Numbers in scripts that turn out to be real sounds, images, meshes or animations get listed with the line they're on. Only the ones you tick get moved and swapped in the script.",
+  auto: "Every number in a script that turns out to be a real asset gets moved and swapped with the rest. Quickest, but a number that only happens to match an asset id (like a group id) gets changed too.",
+};
+function setScriptMode(mode, save) {
+  scriptMode = mode;
+  document.querySelectorAll("#script-mode button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+  $("#script-mode-hint").textContent = SCRIPT_MODE_HINTS[mode] || "";
+  if (save) post("/api/settings", { script_ids: mode });
+  renderMigrate();
+}
+document.querySelectorAll("#script-mode button").forEach((b) => { b.onclick = () => setScriptMode(b.dataset.m, true); });
 async function loadPluginState() {
   const res = await api("/api/studio/plugin"); if (!res.ok) return;
   const p = res.data;
@@ -952,7 +1015,7 @@ $("#pl-browse").onclick = async () => {
 };
 $("#st-off").onclick = async (e) => {
   e.preventDefault();
-  if (!confirm("Disconnect Studio? The plugin will need a new code.")) return;
+  if (!confirm("Unpair every Studio? Each one will need a new code to connect again. You don't need to do this when Studio is just closed.")) return;
   await post("/api/studio/disconnect", {}); pollStudio();
 };
 async function loadTargets() {
@@ -983,9 +1046,10 @@ async function pollMigrate() {
   pollStudio();
   const res = await api("/api/migrate/job");
   if (!res.ok) return;
-  const fresh = !mgJob || mgJob.place !== res.data.place || mgJob.items.length !== res.data.items.length;
   mgJob = res.data;
-  if (fresh && mgJob.items.length) {
+  const key = mgJob.checked ? mgJob.place + ":" + mgJob.run_id + ":" + mgJob.items.length : "";
+  if (key && key !== mgPreviewKey && mgJob.items.length) {
+    mgPreviewKey = key;
     post("/api/bulk/preview", { ids: mgJob.items.map((it) => String(it.id)) }).then((p) => {
       if (p.ok) { p.data.forEach((x) => { if (x.thumb) mgThumbs[x.id] = x.thumb; }); renderMigrate(); }
     });
@@ -994,7 +1058,8 @@ async function pollMigrate() {
 }
 function mgPicked() {
   const to = $("#mg-to").value;
-  return (mgJob ? mgJob.items : []).filter((it) => it.kind && !mgKindsOff.has(it.kind) && it.owner !== to && it.state !== "ok");
+  return (mgJob ? mgJob.items : []).filter((it) => it.kind && !mgKindsOff.has(it.kind) && it.owner !== to && it.state !== "ok" &&
+    (!it.from_script || scriptMode === "auto" || mgScriptPicked.has(it.id)));
 }
 function renderMigrate() {
   const j = mgJob;
@@ -1002,9 +1067,12 @@ function renderMigrate() {
   if (!j || !j.items.length) return;
   const to = $("#mg-to").value;
   $("#mg-title").textContent = j.place || "Assets from Studio";
-  const movable = j.items.filter((it) => it.kind && it.owner !== to);
+  const waiting = (it) => it.from_script && scriptMode !== "auto" && it.kind && it.owner !== to && it.state === "found";
+  const review = j.items.filter(waiting);
+  const movable = j.items.filter((it) => it.kind && it.owner !== to && (!waiting(it) || mgScriptPicked.has(it.id)));
   $("#mg-source").innerHTML = j.items.length + " asset ids from Studio" + (j.checked
-    ? ", " + movable.length + " can be moved. The rest are already there or are types Roblox won't take, so they stay as they are."
+    ? ", " + movable.length + " can be moved. The rest are already there or are types Roblox won't take, so they stay as they are." +
+      (review.length ? " " + review.length + " more were only found in scripts, check them below." : "")
     : ' <span class="spinner"></span> reading them');
   const counts = {};
   movable.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
@@ -1013,6 +1081,23 @@ function renderMigrate() {
   $("#mg-kinds").querySelectorAll(".chip").forEach((c) => {
     c.onclick = () => { const k = c.dataset.k; mgKindsOff.has(k) ? mgKindsOff.delete(k) : mgKindsOff.add(k); renderMigrate(); };
   });
+  $("#mg-review").style.display = j.checked && review.length ? "" : "none";
+  const ticked = review.filter((it) => mgScriptPicked.has(it.id)).length;
+  $("#mg-rv-title").textContent = "Found only in scripts · " + ticked + " of " + review.length + " ticked";
+  const rvKey = review.map((it) => it.id + (mgScriptPicked.has(it.id) ? "+" : "-") + (mgThumbs[it.id] ? "t" : "")).join(",");
+  if ($("#mg-rv-rows").dataset.key !== rvKey) {
+    $("#mg-rv-rows").dataset.key = rvKey;
+    $("#mg-rv-rows").innerHTML = review.map((it) => {
+      const id = String(it.id);
+      const line = esc(it.line || "").split(id).join("<b>" + id + "</b>");
+      return '<label class="rv-row"><input type="checkbox" data-id="' + it.id + '"' + (mgScriptPicked.has(it.id) ? " checked" : "") + " />" +
+        (mgThumbs[it.id] ? '<img class="rthumb" loading="lazy" src="' + esc(mgThumbs[it.id]) + '" alt="" />' : '<span class="rthumb"></span>') +
+        '<div class="main"><div class="t" style="color:rgb(224,224,224)">' + esc(it.name || "asset") + ' <span style="color:rgb(102,102,102)">#' + it.id + "</span></div>" +
+        '<div class="s" style="color:rgb(136,136,136); font-size:0.7rem">' + esc(it.type_label || "?") + (it.owner_name ? " · by " + esc(it.owner_name) : "") + "</div>" +
+        (line ? '<div class="rv-code" title="' + esc(it.line) + '">' + line + "</div>" : "") +
+        '<div class="rv-where" title="' + esc(it.script) + '">in ' + esc(it.script || "a script") + "</div></div></label>";
+    }).join("");
+  }
   const picked = mgPicked();
   $("#mg-audio").style.display = picked.some((it) => it.kind === "Audio") ? "" : "none";
   const moved = j.items.filter((it) => it.state !== "found");
@@ -1021,7 +1106,7 @@ function renderMigrate() {
   const done = c.ok + c.error;
   $("#mg-bar").style.width = (moved.length ? (done / moved.length) * 100 : 0) + "%";
   $("#mg-counts").innerHTML = moved.length ? "<span><b>" + done + "</b> / " + moved.length + " done</span><span><b>" + c.ok + "</b> moved</span><span><b>" + c.error + "</b> failed</span>" : "";
-  $("#mg-rows").innerHTML = j.items.map((it) => {
+  $("#mg-rows").innerHTML = j.items.filter((it) => !waiting(it) || mgScriptPicked.has(it.id)).map((it) => {
     const mine = it.kind && it.owner !== to;
     const state = it.state !== "found" ? it.state : !j.checked ? "" : mine ? (mgKindsOff.has(it.kind) ? "off" : "ready") : it.kind ? "there" : "stays";
     return '<div class="row"' + (mine || it.state !== "found" ? "" : ' style="opacity:0.5"') + ">" +
@@ -1029,7 +1114,8 @@ function renderMigrate() {
       '<div class="main"><div class="t">' + esc(it.name || "asset") + " <span>#" + it.id + "</span>" +
       (it.new_id ? '<span class="arrow">&rarr;</span><span style="color:rgb(59,186,87)">#' + it.new_id + "</span>" : "") + "</div>" +
       (it.error ? '<div class="s err">' + esc(it.error) + "</div>"
-        : '<div class="s">' + esc(it.type_label || "?") + (it.owner_name ? " · by " + esc(it.owner_name) : "") + "</div>") +
+        : '<div class="s">' + esc(it.type_label || "?") + (it.owner_name ? " · by " + esc(it.owner_name) : "") +
+          (it.from_script ? ' · <span style="color:rgb(212,180,90)" title="' + esc(it.script) + '">in ' + esc(it.script.split(".").pop() || "a script") + "</span>" : "") + "</div>") +
       "</div>" + (state ? '<span class="st ' + esc(state) + '">' + esc(state) + "</span>" : "") + "</div>";
   }).join("");
   $("#mg-start").disabled = j.running || !j.checked || !picked.length;
@@ -1038,6 +1124,22 @@ function renderMigrate() {
   $("#mg-copy").disabled = !c.ok;
   $("#mg-bulk").disabled = !!j.running;
 }
+$("#mg-rv-rows").addEventListener("change", (e) => {
+  const box = e.target.closest("input[data-id]"); if (!box) return;
+  const id = Number(box.dataset.id);
+  box.checked ? mgScriptPicked.add(id) : mgScriptPicked.delete(id);
+  renderMigrate();
+});
+$("#mg-rv-all").onclick = (e) => {
+  e.preventDefault();
+  $("#mg-rv-rows").querySelectorAll("input[data-id]").forEach((b) => mgScriptPicked.add(Number(b.dataset.id)));
+  renderMigrate();
+};
+$("#mg-rv-none").onclick = (e) => {
+  e.preventDefault();
+  $("#mg-rv-rows").querySelectorAll("input[data-id]").forEach((b) => mgScriptPicked.delete(Number(b.dataset.id)));
+  renderMigrate();
+};
 $("#mg-bulk").onclick = () => {
   const box = $("#bulk-input");
   box.value = mgJob.items.map((it) => it.id).join(String.fromCharCode(10));

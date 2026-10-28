@@ -171,6 +171,8 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/studio/submit", post(studio_submit))
         .route("/api/studio/job", get(studio_job))
         .route("/api/studio/scan", get(studio_scan))
+        .route("/api/studio/ping", post(studio_ping))
+        .route("/api/studio/unpair", post(studio_unpair))
         .route("/api/migrate/job", get(migrate_job))
         .route("/api/migrate/targets", get(migrate_targets))
         .route("/api/migrate/start", post(migrate_start))
@@ -360,6 +362,7 @@ async fn get_settings() -> Json<Value> {
         "scan_services": s.scan_services,
         "scan_all": store::SCAN_SERVICES,
         "scan_skip_coregui": s.scan_skip_coregui,
+        "script_ids": s.script_ids,
         "version": env!("CARGO_PKG_VERSION"),
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
@@ -375,6 +378,7 @@ struct SettingsBody {
     images_png: Option<bool>,
     scan_services: Option<Vec<String>>,
     scan_skip_coregui: Option<bool>,
+    script_ids: Option<String>,
 }
 
 async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
@@ -407,6 +411,12 @@ async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
     }
     if let Some(skip) = body.scan_skip_coregui {
         s.scan_skip_coregui = skip;
+    }
+    if let Some(mode) = body.script_ids {
+        if !store::SCRIPT_ID_MODES.contains(&mode.as_str()) {
+            return fail("unknown script id mode");
+        }
+        s.script_ids = mode;
     }
     match store::save_settings(&s) {
         Ok(_) => ok(json!({
@@ -786,6 +796,16 @@ fn unpaired() -> axum::response::Response {
 const PLUGIN_FILE: &str = "rbxyoinker-migrate.rbxmx";
 const PLUGIN_BODY: &str = include_str!("../plugin/rbxyoinker-migrate.rbxmx");
 
+/// The plugin source says "dev" for its version, the installed copy gets
+/// this app's version so the panel can tell when it's out of date.
+fn plugin_body() -> String {
+    PLUGIN_BODY.replacen(
+        "local pluginVersion = \"dev\"",
+        &format!("local pluginVersion = \"{}\"", env!("CARGO_PKG_VERSION")),
+        1,
+    )
+}
+
 /// Studio loads plugins from %LOCALAPPDATA%\Roblox\Plugins unless the user
 /// pointed the app somewhere else.
 fn plugins_dir() -> Option<std::path::PathBuf> {
@@ -803,7 +823,7 @@ async fn plugin_state() -> Json<Value> {
     ok(json!({
         "dir": dir.map(|d| d.to_string_lossy().to_string()),
         "installed": current.is_some(),
-        "up_to_date": current.as_deref() == Some(PLUGIN_BODY),
+        "up_to_date": current.as_deref() == Some(plugin_body().as_str()),
     }))
 }
 
@@ -828,7 +848,7 @@ async fn plugin_install(Json(body): Json<InstallBody>) -> Json<Value> {
         return ok(json!({ "need_path": true }));
     };
     let file = dir.join(PLUGIN_FILE);
-    if let Err(e) = std::fs::write(&file, PLUGIN_BODY) {
+    if let Err(e) = std::fs::write(&file, plugin_body()) {
         return fail(format!("couldn't write the plugin there ({e})"));
     }
     ok(json!({ "path": file.to_string_lossy() }))
@@ -886,6 +906,17 @@ struct StudioSubmit {
     #[serde(default)]
     place_id: i64,
     ids: Vec<String>,
+    #[serde(default)]
+    from_scripts: Vec<ScriptId>,
+}
+
+#[derive(Deserialize)]
+struct ScriptId {
+    id: String,
+    #[serde(default)]
+    script: String,
+    #[serde(default)]
+    line: String,
 }
 
 async fn studio_submit(
@@ -897,13 +928,16 @@ async fn studio_submit(
         return unpaired();
     }
     let mut ids: Vec<i64> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for raw in &body.ids {
         if let Ok(id) = raw.trim().parse::<i64>() {
-            if id > 0 && !ids.contains(&id) {
+            if id > 0 && seen.insert(id) {
                 ids.push(id);
             }
         }
     }
+    let scripts: std::collections::HashMap<i64, &ScriptId> =
+        body.from_scripts.iter().filter_map(|s| Some((s.id.trim().parse::<i64>().ok()?, s))).collect();
     let place: String = body.place.chars().take(100).collect();
     let run_id = {
         let mut j = crate::migrate::lock(&st.migrate);
@@ -917,7 +951,14 @@ async fn studio_submit(
             run_id,
             items: ids
                 .iter()
-                .map(|&id| crate::migrate::Item { id, state: "found".into(), ..Default::default() })
+                .map(|&id| crate::migrate::Item {
+                    id,
+                    state: "found".into(),
+                    from_script: scripts.contains_key(&id),
+                    script: scripts.get(&id).map(|s| s.script.chars().take(120).collect()).unwrap_or_default(),
+                    line: scripts.get(&id).map(|s| s.line.chars().take(160).collect()).unwrap_or_default(),
+                    ..Default::default()
+                })
                 .collect(),
             ..Default::default()
         };
@@ -937,6 +978,7 @@ async fn studio_scan(State(st): State<AppState>, headers: axum::http::HeaderMap)
         "services": s.scan_services,
         "all": store::SCAN_SERVICES,
         "skip_coregui": s.scan_skip_coregui,
+        "scripts": s.script_ids != "off",
     }))
     .into_response()
 }
@@ -945,7 +987,40 @@ async fn studio_job(State(st): State<AppState>, headers: axum::http::HeaderMap) 
     if !crate::studio::lock(&st.studio).check(studio_token(&headers).as_deref()) {
         return unpaired();
     }
-    ok(json!(*crate::migrate::lock(&st.migrate))).into_response()
+    let mut job = json!(*crate::migrate::lock(&st.migrate));
+    job["version"] = json!(env!("CARGO_PKG_VERSION"));
+    ok(job).into_response()
+}
+
+#[derive(Deserialize)]
+struct PingBody {
+    #[serde(default)]
+    place: String,
+}
+
+/// The plugin checks in every few seconds while Studio is open, panel or not,
+/// so the Migrate tab knows Studio is there.
+async fn studio_ping(
+    State(st): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PingBody>,
+) -> axum::response::Response {
+    let mut p = crate::studio::lock(&st.studio);
+    if !p.check(studio_token(&headers).as_deref()) {
+        return unpaired();
+    }
+    let place: String = body.place.chars().take(100).collect();
+    if !place.is_empty() {
+        p.place = place;
+    }
+    ok(json!({ "version": env!("CARGO_PKG_VERSION") })).into_response()
+}
+
+async fn studio_unpair(State(st): State<AppState>, headers: axum::http::HeaderMap) -> Json<Value> {
+    if let Some(t) = studio_token(&headers) {
+        crate::studio::lock(&st.studio).revoke(&t);
+    }
+    ok(Value::Null)
 }
 
 async fn migrate_job(State(st): State<AppState>) -> Json<Value> {

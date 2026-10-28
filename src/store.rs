@@ -91,6 +91,8 @@ pub struct Settings {
     pub scan_services: Vec<String>,
     #[serde(default = "yes")]
     pub scan_skip_coregui: bool,
+    #[serde(default = "default_script_ids")]
+    pub script_ids: String,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{name}_{id}";
@@ -123,6 +125,14 @@ fn default_scan() -> Vec<String> {
     SCAN_SERVICES.iter().map(|s| s.to_string()).collect()
 }
 
+/// What happens to asset ids found inside scripts: "off" doesn't read
+/// scripts, "ask" lists them for review, "auto" moves them with the rest.
+pub const SCRIPT_ID_MODES: &[&str] = &["off", "ask", "auto"];
+
+fn default_script_ids() -> String {
+    "off".into()
+}
+
 fn yes() -> bool {
     true
 }
@@ -140,6 +150,7 @@ impl Default for Settings {
             plugins_dir: String::new(),
             scan_services: default_scan(),
             scan_skip_coregui: true,
+            script_ids: default_script_ids(),
         }
     }
 }

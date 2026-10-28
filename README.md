@@ -40,7 +40,7 @@ window, to close it use **Quit** at the bottom of the page.
 - **Migrate** - move a place's assets to your account or a group, from Studio. See below.
 - **Accounts** - every cookie you added, with its avatar, whether it still works and
   how many requests it has done.
-- **Settings** - API key, cookies, download folder, sorting into folders per type, and
+- **Settings** - cookies, download folder, sorting into folders per type, and
   saving meshes as `.obj` too.
 - **History** - past downloads, searchable, with a button to open the file in Explorer.
 
@@ -55,10 +55,19 @@ half its sounds and images stop loading.
 2. Open your place and click **Migrate** in the Plugins tab.
 3. Click **Get a code** in the app and type it into the plugin. You only do this once,
    the plugin stays connected after Studio restarts.
-4. Click **Scan place** in the plugin. Every asset id in the place (properties and
-   `rbxassetid://` in scripts) shows up in the app.
+4. Click **Scan place** in the plugin. Every asset id in the place shows up in the app.
+   Pick which services get scanned in the Migrate tab. CoreGui is skipped by default.
 5. Pick where they go, choose **Swap IDs in the place** or **Only give me a mapping**,
    and hit Move. The plugin swaps the ids in when it's done, Ctrl+Z undoes it.
+
+**Asset ids inside scripts** has three options in the Migrate tab:
+
+- **Ignore** (default): scripts aren't read, only ids set in properties get moved.
+- **Ask me**: numbers in scripts that turn out to be real assets get listed separately
+  with the line they're on and the script they're in. Only the ones you tick get moved
+  and swapped in the script.
+- **Move them**: they get moved and swapped like everything else. Quickest, but a
+  number that only happens to match an asset id (a group id, say) gets changed too.
 
 Sounds, images, meshes and animations get moved. It works with any asset rbxyoinker
 can download, not only your own. Everything downloads first (spread across your
@@ -68,17 +77,16 @@ verification, 10 without).
 
 ## Credentials
 
-Most assets need you to be logged in, so add at least one of these in Settings.
-They're stored in Windows Credential Manager, not in a file.
-
-- **Open Cloud API key** with the `legacy-asset:manage` scope. Make one at
-  create.roblox.com/dashboard/credentials. Safest option since it can't do anything
-  else with your account.
-- **`.ROBLOSECURITY` cookies**, one per line. These get you more assets than the API
-  key. Adding a few (alts are fine) makes bulk downloads faster, requests get spread
-  across them and if one gets rate limited the others keep going.
+Most assets need you to be logged in, so add a `.ROBLOSECURITY` cookie in Settings.
+It's stored in Windows Credential Manager, not in a file. Adding a few (alts are fine)
+makes bulk downloads faster, requests get spread across them and if one gets rate
+limited the others keep going.
 
 Don't share your cookie with anyone, it's a full login to your account.
+
+An Open Cloud API key (`legacy-asset:manage` scope) works too, but it's not
+recommended: it reaches far fewer assets than a cookie, and it keeps working until you
+delete it on create.roblox.com. It's tucked away at the bottom of Settings.
 
 ## How it gets private assets
 

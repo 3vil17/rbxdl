@@ -24,6 +24,9 @@ pub struct Item {
     pub new_id: Option<i64>,
     pub decal_id: Option<i64>,
     pub error: Option<String>,
+    pub from_script: bool,
+    pub script: String,
+    pub line: String,
 }
 
 #[derive(Serialize, Default)]
@@ -54,16 +57,21 @@ pub fn kind_of(asset_type_id: i64) -> &'static str {
     }
 }
 
-/// Fills in name, type and owner for everything the plugin sent.
+/// Fills in name, type and owner for everything the plugin sent. Numbers
+/// that only showed up in scripts are mostly not assets, so they only go
+/// through the batch lookup, and the ones that aren't a movable asset are
+/// dropped instead of being looked up one by one.
 pub async fn check(rb: Roblox, pool: Pool, job: Shared) {
-    let ids: Vec<i64> = lock(&job).items.iter().map(|i| i.id).collect();
+    let ids: Vec<(i64, bool)> = lock(&job).items.iter().map(|i| (i.id, i.from_script)).collect();
+    let all: Vec<i64> = ids.iter().map(|(id, _)| *id).collect();
     if let Some(lease) = pool.acquire(&[]).await {
-        rb.prefetch_details(&lease.cookie, &ids).await;
+        rb.prefetch_details(&lease.cookie, &all).await;
     }
     let mut details = Vec::new();
-    for id in &ids {
+    for (id, from_script) in &ids {
         let d = match rb.cached_details(*id) {
             Some(d) => Some(d),
+            None if *from_script => None,
             None => rb.asset_details(*id).await.ok(),
         };
         details.push(d);
@@ -82,6 +90,7 @@ pub async fn check(rb: Roblox, pool: Pool, job: Shared) {
             it.owner_name = names.get(&it.owner).cloned().unwrap_or(d.creator_name);
         }
     }
+    j.items.retain(|it| !it.from_script || !it.kind.is_empty());
     j.checked = true;
 }
 

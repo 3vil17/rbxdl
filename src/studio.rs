@@ -99,6 +99,16 @@ impl Pairing {
         !self.tokens.is_empty()
     }
 
+    /// Forgets one Studio, the others stay paired.
+    pub fn revoke(&mut self, token: &str) {
+        self.tokens.retain(|t| t != token);
+        if self.tokens.is_empty() {
+            self.last_seen = None;
+            self.place.clear();
+        }
+        self.save();
+    }
+
     pub fn disconnect(&mut self) {
         self.tokens.clear();
         self.code = None;
