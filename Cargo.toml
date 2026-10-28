@@ -1,6 +1,6 @@
 [package]
 name = "rbxyoinker"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Local Roblox asset downloader with a web UI"
 authors = ["3vil17"]

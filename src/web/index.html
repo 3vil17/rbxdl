@@ -318,7 +318,7 @@
         <ul>
           <li>Enter an <strong>asset id</strong> or paste any Roblox URL, then <strong>Fetch</strong> to preview it.</li>
           <li><strong>Download</strong> walks the authorization ladder: Open Cloud key, then each saved account directly, then the creator's own places as a place-id context.</li>
-          <li><strong>Bulk</strong> takes up to 500 ids at once, or import a place / model file to pull every asset id out of it.</li>
+          <li><strong>Bulk</strong> takes up to 1000 ids at once, or import a place / model file to pull every asset id out of it.</li>
           <li>Leave <strong>Version</strong> empty for the latest, or enter a number to grab an older version.</li>
           <li>Files save to your download folder (set in <strong>Settings</strong>); every download is kept in <strong>History</strong>.</li>
           <li>Decals and images that resolve to an XML descriptor are followed once to the real image.</li>
@@ -330,9 +330,9 @@
     <section id="tab-bulk" style="display:none; flex-direction:column; gap:10px;">
       <div class="card">
         <h2 class="sect"><i data-i="layers"></i>Bulk download</h2>
-        <textarea id="bulk-input" spellcheck="false" placeholder="ids or links, separated by spaces, commas or new lines (max 500)"></textarea>
+        <textarea id="bulk-input" spellcheck="false" placeholder="ids or links, separated by spaces, commas or new lines (max 1000)"></textarea>
         <div class="counts">
-          <span><b id="bulk-count">0</b> / 500 ids</span>
+          <span><b id="bulk-count">0</b> / 1000 ids</span>
           <span id="preview-state"></span>
           <label class="check"><input type="checkbox" id="skip-existing" checked /> Skip ones I already have</label>
         </div>
@@ -380,13 +380,17 @@
           <label>API key</label>
           <div class="frow"><input id="api-key" type="password" placeholder="Open Cloud key" autocomplete="off" /></div>
         </div>
-        <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:12px 0 6px;">Cookies <span id="cookie-count"></span></label>
-        <textarea id="cookies" class="lines" wrap="off" spellcheck="false" autocomplete="off" placeholder=".ROBLOSECURITY values, one per line"></textarea>
+        <div class="fbtns" style="margin-top:10px"><button class="btn" id="save-key" data-i="save">Save API key</button></div>
+        <p class="hint">API key scope <code>legacy-asset:manage</code>. Leave blank to keep what's saved.</p>
+
+        <div class="sep"></div>
+        <label style="display:block; font-size:0.78rem; color:rgb(144,144,144); margin:0 0 8px;">Cookies <span id="cookie-count"></span></label>
+        <div id="cookie-list"></div>
+        <textarea id="cookies" class="lines" wrap="off" spellcheck="false" autocomplete="off" placeholder="Paste one or more .ROBLOSECURITY values, one per line, to add"></textarea>
         <div class="fbtns">
-          <button class="btn" id="save-creds" data-i="save">Save credentials</button>
-          <button class="btn" id="clear-cookies" data-i="trash">Remove all cookies</button>
+          <button class="btn" id="add-cookies" data-i="save">Add cookies</button>
         </div>
-        <p class="hint">API key scope <code>legacy-asset:manage</code>. Leave a field blank to keep what's saved. Saving cookies replaces the whole list.</p>
+        <p class="hint">Each cookie is a full login, kept only on this PC. Adding more spreads bulk downloads across them.</p>
         <div class="note" id="cookie-note"></div>
       </div>
 
@@ -604,25 +608,44 @@ async function loadSettings() {
   $("#sort-type").checked = !!res.data.sort_by_type;
   $("#mesh-obj").checked = !!res.data.mesh_obj;
   $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
-  $("#cookie-count").textContent = res.data.cookie_count ? "(" + res.data.cookie_count + " saved)" : "";
-  $("#cookies").placeholder = res.data.cookie_count ? "saved, blank keeps them. Paste a new list to replace" : ".ROBLOSECURITY values, one per line";
+  loadCookies();
 }
-async function saveCreds(body) {
-  showNote($("#cookie-note"), "info", "Saving and checking accounts…");
-  const res = await post("/api/credentials", body);
+async function loadCookies() {
+  const res = await api("/api/accounts"); const list = $("#cookie-list");
+  const rows = res.ok ? res.data : [];
+  $("#cookie-count").textContent = rows.length ? "(" + rows.length + " saved, " + rows.filter((a) => a.alive).length + " alive)" : "";
+  if (!rows.length) { list.innerHTML = '<div class="empty" style="padding:10px 0">No cookies yet. Paste one below.</div>'; return; }
+  list.innerHTML = rows.map((a, i) =>
+    '<div class="row"><img class="avatar' + (a.alive ? "" : " off") + '" src="' + esc(a.avatar || "/logo.png") + '" alt="" /><div class="main">' +
+    '<div class="t">' + (a.username ? "@" + esc(a.username) : "unknown account") +
+    (a.alive ? "" : ' <span style="color:rgb(208,96,112)">expired</span>') + "</div>" +
+    '<div class="s" style="font-family:monospace">' + esc(a.preview || "") + "</div></div>" +
+    '<button class="btn" data-x="' + i + '" title="Remove">' + svg("trash") + "</button></div>").join("");
+  list.querySelectorAll("button[data-x]").forEach((b) => {
+    b.onclick = async () => {
+      const r = await post("/api/cookies/remove", { index: Number(b.dataset.x) });
+      if (!r.ok) { showNote($("#cookie-note"), "err", esc(r.error)); return; }
+      loadCookies();
+    };
+  });
+}
+$("#save-key").onclick = async () => {
+  const k = $("#api-key").value;
+  if (k === "") { showNote($("#cookie-note"), "info", "Nothing to save, the API key field is empty."); return; }
+  const res = await post("/api/credentials", { api_key: k });
   if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
-  $("#api-key").value = ""; $("#cookies").value = "";
-  const acc = await api("/api/accounts");
-  const live = acc.ok ? acc.data.filter((a) => a.alive).length : 0;
-  showNote($("#cookie-note"), "ok", "Saved. " + res.data.cookie_count + " cookie(s), " + live + " alive. See <b>Accounts</b>.");
-  loadSettings();
-}
-$("#save-creds").onclick = () => {
-  const body = {}; const k = $("#api-key").value, c = $("#cookies").value.trim();
-  if (k !== "") body.api_key = k; if (c !== "") body.cookies = c;
-  saveCreds(body);
+  $("#api-key").value = ""; showNote($("#cookie-note"), "ok", "API key saved."); loadSettings();
 };
-$("#clear-cookies").onclick = () => { if (confirm("Remove all saved cookies?")) saveCreds({ cookies: "" }); };
+$("#add-cookies").onclick = async () => {
+  const c = $("#cookies").value.trim();
+  if (c === "") { showNote($("#cookie-note"), "info", "Paste a cookie first."); return; }
+  showNote($("#cookie-note"), "info", "Adding and checking…");
+  const res = await post("/api/cookies/add", { cookies: c });
+  if (!res.ok) { showNote($("#cookie-note"), "err", esc(res.error)); return; }
+  $("#cookies").value = "";
+  showNote($("#cookie-note"), res.data.added ? "ok" : "info", res.data.added ? "Added " + res.data.added + " cookie(s)." : "Those were already saved.");
+  loadCookies();
+};
 
 // ---- Accounts ----
 async function loadAccounts(recheck) {
@@ -670,10 +693,10 @@ document.querySelectorAll("#access-seg button").forEach((b) => {
 const thumbs = {};
 $("#bulk-input").addEventListener("input", () => {
   const n = new Set(splitIds($("#bulk-input").value)).size;
-  $("#bulk-count").textContent = n; $("#bulk-count").style.color = n > 500 ? "var(--red)" : "";
+  $("#bulk-count").textContent = n; $("#bulk-count").style.color = n > 1000 ? "var(--red)" : "";
   preview = null; $("#type-chips").innerHTML = ""; $("#preview-state").textContent = ""; $("#access-seg").style.display = "none";
   clearTimeout(previewTimer);
-  if (n && n <= 500) previewTimer = setTimeout(loadPreview, 700);
+  if (n && n <= 1000) previewTimer = setTimeout(loadPreview, 700);
 });
 async function loadPreview() {
   const ids = [...new Set(splitIds($("#bulk-input").value))];
@@ -800,8 +823,8 @@ async function importFile(f) {
   box.value = (box.value.trim() ? box.value.trim() + sep : "") + fresh.join(sep);
   box.dispatchEvent(new Event("input"));
   const total = have.size + fresh.length;
-  showNote($("#bulk-note"), total > 500 ? "err" : "ok", "Found " + res.data.ids.length + " asset ids in <b>" + esc(f.name) + "</b>, added " + fresh.length + " new." +
-    (total > 500 ? " That's over 500, run the first 500 then paste the rest in a second batch." : ""));
+  showNote($("#bulk-note"), total > 1000 ? "err" : "ok", "Found " + res.data.ids.length + " asset ids in <b>" + esc(f.name) + "</b>, added " + fresh.length + " new." +
+    (total > 1000 ? " That's over 1000, run the first 1000 then paste the rest in a second batch." : ""));
 }
 $("#bulk-cancel").onclick = () => post("/api/bulk/cancel", {});
 pollBulk().then(() => { if ($("#bulk-cancel").disabled === false) startPolling(); });

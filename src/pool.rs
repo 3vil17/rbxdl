@@ -183,6 +183,7 @@ impl Pool {
                     "username": a.username,
                     "user_id": a.user_id,
                     "avatar": a.avatar,
+                    "preview": format!("{}\u{2026}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}", a.cookie.chars().take(22).collect::<String>()),
                     "alive": a.alive,
                     "uses": a.uses,
                     "limited": a.limited,

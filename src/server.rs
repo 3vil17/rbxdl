@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-const BULK_MAX: usize = 500;
+const BULK_MAX: usize = 1000;
 const PORT: u16 = 48620;
 
 // Browsers tag every request with where it came from. Anything a different
@@ -118,6 +118,8 @@ pub async fn run(updated: bool) -> std::io::Result<()> {
         .route("/api/credentials", post(set_credentials))
         .route("/api/accounts", get(accounts))
         .route("/api/accounts/refresh", post(refresh_accounts))
+        .route("/api/cookies/add", post(cookies_add))
+        .route("/api/cookies/remove", post(cookies_remove))
         .route("/api/bulk", post(bulk_start))
         .route("/api/bulk/status", get(bulk_status))
         .route("/api/bulk/cancel", post(bulk_cancel))
@@ -361,6 +363,45 @@ async fn set_credentials(State(st): State<AppState>, Json(body): Json<CredsBody>
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
     }))
+}
+
+#[derive(Deserialize)]
+struct AddCookiesBody {
+    cookies: String,
+}
+
+async fn cookies_add(State(st): State<AppState>, Json(body): Json<AddCookiesBody>) -> Json<Value> {
+    let mut list = store::load_cookies();
+    let mut added = 0;
+    for c in parse_cookies(&body.cookies) {
+        if !list.contains(&c) {
+            list.push(c);
+            added += 1;
+        }
+    }
+    if let Err(e) = store::save_cookies(&list) {
+        return fail(e.to_string());
+    }
+    st.pool.reload(&st.rb).await;
+    ok(json!({ "added": added, "count": list.len() }))
+}
+
+#[derive(Deserialize)]
+struct RemoveCookieBody {
+    index: usize,
+}
+
+async fn cookies_remove(State(st): State<AppState>, Json(body): Json<RemoveCookieBody>) -> Json<Value> {
+    let mut list = store::load_cookies();
+    if body.index >= list.len() {
+        return fail("that cookie is already gone");
+    }
+    list.remove(body.index);
+    if let Err(e) = store::save_cookies(&list) {
+        return fail(e.to_string());
+    }
+    st.pool.reload(&st.rb).await;
+    ok(json!({ "count": list.len() }))
 }
 
 async fn accounts(State(st): State<AppState>) -> Json<Value> {

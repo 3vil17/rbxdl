@@ -33,7 +33,7 @@ window, to close it use **Quit** at the bottom of the page.
 - **Download** - paste an id or any roblox.com / create.roblox.com link and hit Fetch.
   You get a preview with the type, whether it's public or private, and a Play button
   for audio. Put a number in Version to grab an older version of the asset.
-- **Bulk** - paste up to 500 ids or links, or drop a `.rbxl` / `.rbxm` / `.rbxlx` /
+- **Bulk** - paste up to 1000 ids or links, or drop a `.rbxl` / `.rbxm` / `.rbxlx` /
   `.rbxmx` file on it to pull every asset id out of a place or model. Filter by type
   and by public / private before you start. Afterwards you can retry the failed ones,
   copy their ids or zip everything.
