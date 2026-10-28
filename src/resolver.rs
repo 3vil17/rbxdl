@@ -111,38 +111,108 @@ pub async fn resolve(
         notes.push("Place-Id fallback: skipped, asset has no public creator info".into());
         return Err(finish(notes, limited));
     };
-    let places = rb.list_creator_places(&ctype, cid).await;
+    let mut tried_places: Vec<i64> = Vec::new();
+    let places = rb.list_creator_places(&ctype, cid, 60).await;
     if places.is_empty() {
         notes.push(format!("Place-Id fallback: the creator ({ctype} {cid}) has no public places"));
+    } else {
+        match try_places(rb, pool, id, version, &places, None, &mut tried_places).await {
+            Places::Hit(a) => return Ok(a),
+            Places::Limited(n) => {
+                notes.push(format!("Place-Id fallback: rate limited after {n} places"));
+                return Err(finish(notes, true));
+            }
+            Places::Denied(n, last) => notes.push(format!(
+                "Place-Id fallback: {n} public places from the creator, all denied (last: {last})"
+            )),
+        }
+    }
+
+    if !ctype.eq_ignore_ascii_case("User") {
         return Err(finish(notes, limited));
     }
-    let mut last = String::new();
+    let mut groups = rb.user_groups(cid).await;
+    groups.sort_by(|a, b| b.rank.cmp(&a.rank));
+    groups.truncate(GROUP_LIMIT);
     let mut count = 0;
-    for p in &places {
+    let mut last = String::new();
+    for g in &groups {
+        if count >= GROUP_PLACE_LIMIT {
+            break;
+        }
+        let places = rb.list_creator_places("Group", g.id, 10).await;
+        match try_places(rb, pool, id, version, &places, Some(&g.name), &mut tried_places).await {
+            Places::Hit(a) => return Ok(a),
+            Places::Limited(n) => {
+                notes.push(format!("Group games: rate limited after {} places", count + n));
+                return Err(finish(notes, true));
+            }
+            Places::Denied(n, l) => {
+                count += n;
+                if !l.is_empty() {
+                    last = l;
+                }
+            }
+        }
+    }
+    if groups.is_empty() {
+        notes.push("Group games: the creator is in no public groups".into());
+    } else {
+        notes.push(format!(
+            "Group games: {count} places across {} of the creator's groups, all denied{}",
+            groups.len(),
+            if last.is_empty() { String::new() } else { format!(" (last: {last})") }
+        ));
+    }
+    Err(finish(notes, limited))
+}
+
+const GROUP_LIMIT: usize = 15;
+const GROUP_PLACE_LIMIT: usize = 60;
+
+enum Places {
+    Hit(Attempt),
+    Denied(usize, String),
+    Limited(usize),
+}
+
+async fn try_places(
+    rb: &Roblox,
+    pool: &Pool,
+    id: i64,
+    version: Option<u32>,
+    places: &[crate::roblox::PlaceRef],
+    group: Option<&str>,
+    tried: &mut Vec<i64>,
+) -> Places {
+    let mut count = 0;
+    let mut last = String::new();
+    for p in places {
+        if tried.contains(&p.place_id) {
+            continue;
+        }
+        tried.push(p.place_id);
         match via_cookie(rb, pool, id, Some(p.place_id), version, &[]).await {
             Ok((bytes, label)) => {
-                return Ok(Attempt {
+                let via = match group {
+                    Some(g) => format!(" via group {g}"),
+                    None => String::new(),
+                };
+                return Places::Hit(Attempt {
                     bytes,
-                    method: format!("Cookie \u{b7} {label} \u{b7} Place-Id {} ({})", p.place_id, p.name),
+                    method: format!("Cookie \u{b7} {label} \u{b7} Place-Id {} ({}){via}", p.place_id, p.name),
                     place_id: Some(p.place_id),
                     account: Some(label),
-                })
+                });
             }
             Err(Some(d)) => {
                 count += 1;
                 last = d.error.to_string();
             }
-            Err(None) => {
-                limited = true;
-                notes.push(format!("Place-Id fallback: rate limited after {count} places"));
-                return Err(finish(notes, limited));
-            }
+            Err(None) => return Places::Limited(count),
         }
     }
-    notes.push(format!(
-        "Place-Id fallback: {count} public places from the creator, all denied (last: {last})"
-    ));
-    Err(finish(notes, limited))
+    Places::Denied(count, last)
 }
 
 fn finish(notes: Vec<String>, limited: bool) -> Error {

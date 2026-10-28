@@ -29,6 +29,12 @@ pub struct CookieInfo {
     pub robux: Option<i64>,
 }
 
+pub struct GroupRef {
+    pub id: i64,
+    pub name: String,
+    pub rank: i64,
+}
+
 #[derive(Serialize, Clone)]
 pub struct PlaceRef {
     pub place_id: i64,
@@ -142,7 +148,26 @@ impl Roblox {
         }
     }
 
-    pub async fn list_creator_places(&self, creator_type: &str, creator_id: i64) -> Vec<PlaceRef> {
+    pub async fn user_groups(&self, user_id: i64) -> Vec<GroupRef> {
+        let url = format!("https://groups.roblox.com/v2/users/{user_id}/groups/roles");
+        let Ok(resp) = self.http.get(&url).send().await else { return Vec::new() };
+        let Ok(v) = resp.json::<Value>().await else { return Vec::new() };
+        v["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|it| {
+                Some(GroupRef {
+                    id: it["group"]["id"].as_i64()?,
+                    name: it["group"]["name"].as_str().unwrap_or("group").to_string(),
+                    rank: it["role"]["rank"].as_i64().unwrap_or(0),
+                })
+            })
+            .collect()
+    }
+
+    pub async fn list_creator_places(&self, creator_type: &str, creator_id: i64, max: usize) -> Vec<PlaceRef> {
+        let page = if max <= 10 { 10 } else { 50 };
         let base = if creator_type.eq_ignore_ascii_case("Group") {
             format!("https://games.roblox.com/v2/groups/{creator_id}/games")
         } else {
@@ -151,9 +176,18 @@ impl Roblox {
         let mut out = Vec::new();
         let mut cursor = String::new();
         for _ in 0..4 {
-            let url = format!("{base}?accessFilter=Public&limit=50&sortOrder=Asc&cursor={cursor}");
-            let Ok(resp) = self.http.get(&url).send().await else { break };
-            let Ok(v) = resp.json::<Value>().await else { break };
+            let url = format!("{base}?accessFilter=Public&limit={page}&sortOrder=Asc&cursor={cursor}");
+            let mut got = None;
+            for attempt in 0..4u64 {
+                let Ok(resp) = self.http.get(&url).send().await else { break };
+                if resp.status().as_u16() == 429 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2 + attempt * 2)).await;
+                    continue;
+                }
+                got = resp.json::<Value>().await.ok();
+                break;
+            }
+            let Some(v) = got else { break };
             if let Some(items) = v["data"].as_array() {
                 for it in items {
                     let place_id = it["rootPlaceId"]
@@ -172,10 +206,11 @@ impl Roblox {
                 Some(c) if !c.is_empty() => cursor = c.to_string(),
                 _ => break,
             }
-            if out.len() >= 60 {
+            if out.len() >= max {
                 break;
             }
         }
+        out.truncate(max);
         out
     }
 
