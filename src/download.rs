@@ -37,7 +37,8 @@ pub async fn fetch_and_save(
     api_key: Option<&str>,
     pool: &Pool,
     id: i64,
-    save_dir: &str,
+    version: Option<u32>,
+    settings: &store::Settings,
 ) -> Result<DownloadInfo> {
     let details = rb.asset_details(id).await.ok();
     let (name, atype0, creator) = match &details {
@@ -45,12 +46,12 @@ pub async fn fetch_and_save(
         None => (format!("asset_{id}"), 0, None),
     };
 
-    let mut attempt = resolver::resolve(rb, api_key, pool, id, creator).await?;
+    let mut attempt = resolver::resolve(rb, api_key, pool, id, version, creator).await?;
 
     let mut atype = atype0;
     if let Some(inner) = convert::inner_asset_id(&attempt.bytes) {
         if inner != id {
-            if let Ok(a2) = resolver::resolve(rb, api_key, pool, inner, None).await {
+            if let Ok(a2) = resolver::resolve(rb, api_key, pool, inner, None, None).await {
                 attempt.bytes = a2.bytes;
                 attempt.method = format!("{} (decal \u{2192} {})", attempt.method, inner);
                 atype = 1;
@@ -60,10 +61,16 @@ pub async fn fetch_and_save(
 
     let ext = convert::extension_for(&attempt.bytes, atype);
     let type_label = convert::type_label(atype0).to_string();
-    let filename = format!("{}_{}.{}", sanitize(&name), id, ext);
+    let filename = match version {
+        Some(v) => format!("{}_{}_v{}.{}", sanitize(&name), id, v, ext),
+        None => format!("{}_{}.{}", sanitize(&name), id, ext),
+    };
 
-    let dir = std::path::Path::new(save_dir);
-    std::fs::create_dir_all(dir)?;
+    let mut dir = std::path::PathBuf::from(&settings.save_dir);
+    if settings.sort_by_type {
+        dir.push(sanitize(&type_label));
+    }
+    std::fs::create_dir_all(&dir)?;
     let full = dir.join(&filename);
     std::fs::write(&full, &attempt.bytes)?;
     let path = full.to_string_lossy().to_string();

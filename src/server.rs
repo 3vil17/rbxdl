@@ -4,7 +4,8 @@ use crate::pool::Pool;
 use crate::roblox::Roblox;
 use crate::store;
 use axum::{
-    extract::{Query, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Query, State},
     http::header,
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -28,6 +29,7 @@ struct AppState {
 struct Bulk {
     running: bool,
     cancel: bool,
+    skip_existing: bool,
     items: Vec<BulkItem>,
 }
 
@@ -42,7 +44,20 @@ struct BulkItem {
     error: Option<String>,
 }
 
+async fn already_running() -> Option<String> {
+    let raw = std::fs::read_to_string(store::config_dir().join("instance.json")).ok()?;
+    let url = serde_json::from_str::<Value>(&raw).ok()?["url"].as_str()?.to_string();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().ok()?;
+    let resp = client.get(format!("{url}/api/settings")).send().await.ok()?;
+    resp.status().is_success().then_some(url)
+}
+
 pub async fn run() -> std::io::Result<()> {
+    if let Some(url) = already_running().await {
+        println!("rbxyoinker is already running at {url}");
+        let _ = open::that(&url);
+        return Ok(());
+    }
     let state = AppState { rb: Roblox::new(), pool: Pool::default(), bulk: Arc::default() };
     state.pool.reload(&state.rb).await;
 
@@ -58,6 +73,10 @@ pub async fn run() -> std::io::Result<()> {
         .route("/api/bulk", post(bulk_start))
         .route("/api/bulk/status", get(bulk_status))
         .route("/api/bulk/cancel", post(bulk_cancel))
+        .route("/api/bulk/retry", post(bulk_retry))
+        .route("/api/bulk/zip", post(bulk_zip))
+        .route("/api/scan-file", post(scan_file).layer(DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/api/update", get(update_check))
         .route("/api/history", get(get_history))
         .route("/api/history/clear", post(clear_history))
         .route("/api/reveal", post(reveal))
@@ -68,6 +87,10 @@ pub async fn run() -> std::io::Result<()> {
     let addr = listener.local_addr()?;
     let url = format!("http://{addr}");
     println!("rbxyoinker running at {url}");
+    let _ = std::fs::write(
+        store::config_dir().join("instance.json"),
+        json!({ "url": url, "pid": std::process::id() }).to_string(),
+    );
     let _ = open::that(&url);
 
     axum::serve(listener, app).await
@@ -153,6 +176,7 @@ async fn lookup(State(st): State<AppState>, Query(q): Query<LookupQ>) -> Json<Va
 #[derive(Deserialize)]
 struct DownloadBody {
     id: String,
+    version: Option<u32>,
 }
 
 async fn download_asset(State(st): State<AppState>, Json(body): Json<DownloadBody>) -> Json<Value> {
@@ -161,15 +185,8 @@ async fn download_asset(State(st): State<AppState>, Json(body): Json<DownloadBod
     };
     let settings = store::load_settings();
     let api_key = store::get_secret("api_key");
-    match download::fetch_and_save(
-        &st.rb,
-        api_key.as_deref(),
-        &st.pool,
-        id,
-        &settings.save_dir,
-    )
-    .await
-    {
+    let version = body.version.filter(|v| *v > 0);
+    match download::fetch_and_save(&st.rb, api_key.as_deref(), &st.pool, id, version, &settings).await {
         Ok(info) => ok(json!({
             "id": info.id,
             "name": info.name,
@@ -187,6 +204,7 @@ async fn get_settings() -> Json<Value> {
     let s = store::load_settings();
     ok(json!({
         "save_dir": s.save_dir,
+        "sort_by_type": s.sort_by_type,
         "has_key": store::get_secret("api_key").is_some(),
         "cookie_count": store::load_cookies().len(),
     }))
@@ -194,19 +212,24 @@ async fn get_settings() -> Json<Value> {
 
 #[derive(Deserialize)]
 struct SettingsBody {
-    save_dir: String,
+    save_dir: Option<String>,
+    sort_by_type: Option<bool>,
 }
 
 async fn set_settings(Json(body): Json<SettingsBody>) -> Json<Value> {
-    let dir = body.save_dir.trim();
-    if dir.is_empty() {
-        return fail("save folder cannot be empty");
+    let mut s = store::load_settings();
+    if let Some(dir) = body.save_dir {
+        let dir = dir.trim();
+        if dir.is_empty() {
+            return fail("save folder cannot be empty");
+        }
+        s.save_dir = dir.to_string();
     }
-    let s = store::Settings {
-        save_dir: dir.to_string(),
-    };
+    if let Some(sort) = body.sort_by_type {
+        s.sort_by_type = sort;
+    }
     match store::save_settings(&s) {
-        Ok(_) => ok(json!({ "save_dir": s.save_dir })),
+        Ok(_) => ok(json!({ "save_dir": s.save_dir, "sort_by_type": s.sort_by_type })),
         Err(e) => fail(e.to_string()),
     }
 }
@@ -257,9 +280,30 @@ async fn refresh_accounts(State(st): State<AppState>) -> Json<Value> {
     ok(st.pool.snapshot())
 }
 
+fn version_tuple(v: &str) -> Vec<u32> {
+    v.trim_start_matches('v').split('.').map(|p| p.parse().unwrap_or(0)).collect()
+}
+
+async fn update_check(State(st): State<AppState>) -> Json<Value> {
+    let current = env!("CARGO_PKG_VERSION");
+    match st.rb.latest_release().await {
+        Some((tag, url)) if version_tuple(&tag) > version_tuple(current) => {
+            ok(json!({ "available": true, "latest": tag, "url": url, "current": current }))
+        }
+        _ => ok(json!({ "available": false, "current": current })),
+    }
+}
+
+async fn scan_file(body: Bytes) -> Json<Value> {
+    let ids = tokio::task::spawn_blocking(move || crate::scan::asset_ids(&body)).await.unwrap_or_default();
+    ok(json!({ "ids": ids.iter().map(|i| i.to_string()).collect::<Vec<_>>() }))
+}
+
 #[derive(Deserialize)]
 struct BulkBody {
     ids: Vec<String>,
+    #[serde(default)]
+    skip_existing: bool,
 }
 
 async fn bulk_start(State(st): State<AppState>, Json(body): Json<BulkBody>) -> Json<Value> {
@@ -285,13 +329,44 @@ async fn bulk_start(State(st): State<AppState>, Json(body): Json<BulkBody>) -> J
         *b = Bulk {
             running: true,
             cancel: false,
+            skip_existing: body.skip_existing,
             items: ids.iter().map(|&id| BulkItem { id, state: "queued", ..Default::default() }).collect(),
         };
     }
-    let workers = (st.pool.alive_count() * 2).clamp(2, 8);
     let total = ids.len();
-    tokio::spawn(run_bulk(st, ids, workers));
+    let workers = spawn_bulk(&st, (0..total).collect());
     ok(json!({ "total": total, "workers": workers }))
+}
+
+async fn bulk_retry(State(st): State<AppState>) -> Json<Value> {
+    let todo: Vec<usize> = {
+        let mut b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+        if b.running {
+            return fail("a bulk download is already running");
+        }
+        let todo: Vec<usize> =
+            b.items.iter().enumerate().filter(|(_, it)| it.state == "error" || it.state == "skipped").map(|(i, _)| i).collect();
+        for &i in &todo {
+            b.items[i] = BulkItem { id: b.items[i].id, state: "queued", ..Default::default() };
+        }
+        if !todo.is_empty() {
+            b.running = true;
+            b.cancel = false;
+        }
+        todo
+    };
+    if todo.is_empty() {
+        return fail("nothing failed, nothing to retry");
+    }
+    let total = todo.len();
+    let workers = spawn_bulk(&st, todo);
+    ok(json!({ "total": total, "workers": workers }))
+}
+
+fn spawn_bulk(st: &AppState, todo: Vec<usize>) -> usize {
+    let workers = (st.pool.alive_count() * 2).clamp(2, 8);
+    tokio::spawn(run_bulk(st.clone(), todo, workers));
+    workers
 }
 
 fn bulk_set(st: &AppState, i: usize, f: impl FnOnce(&mut BulkItem)) -> bool {
@@ -300,25 +375,37 @@ fn bulk_set(st: &AppState, i: usize, f: impl FnOnce(&mut BulkItem)) -> bool {
     b.cancel
 }
 
-async fn run_bulk(st: AppState, ids: Vec<i64>, workers: usize) {
-    let ids = Arc::new(ids);
+async fn run_bulk(st: AppState, todo: Vec<usize>, workers: usize) {
+    let todo = Arc::new(todo);
     let next = Arc::new(AtomicUsize::new(0));
+    let skip_existing = st.bulk.lock().unwrap_or_else(|e| e.into_inner()).skip_existing;
     let mut handles = Vec::new();
     for _ in 0..workers {
-        let (st, ids, next) = (st.clone(), ids.clone(), next.clone());
+        let (st, todo, next) = (st.clone(), todo.clone(), next.clone());
         handles.push(tokio::spawn(async move {
             let settings = store::load_settings();
             let api_key = store::get_secret("api_key");
             loop {
-                let i = next.fetch_add(1, Ordering::SeqCst);
-                let Some(&id) = ids.get(i) else { break };
+                let Some(&i) = todo.get(next.fetch_add(1, Ordering::SeqCst)) else { break };
+                let id = st.bulk.lock().unwrap_or_else(|e| e.into_inner()).items[i].id;
                 if bulk_set(&st, i, |it| it.state = "working") {
                     bulk_set(&st, i, |it| it.state = "skipped");
                     continue;
                 }
+                if skip_existing {
+                    if let Some(h) = store::existing_download(id) {
+                        bulk_set(&st, i, |it| {
+                            it.state = "have";
+                            it.name = Some(h.name);
+                            it.method = Some("already downloaded".into());
+                            it.path = Some(h.path);
+                        });
+                        continue;
+                    }
+                }
                 let mut tries = 0;
                 let res = loop {
-                    let r = download::fetch_and_save(&st.rb, api_key.as_deref(), &st.pool, id, &settings.save_dir).await;
+                    let r = download::fetch_and_save(&st.rb, api_key.as_deref(), &st.pool, id, None, &settings).await;
                     match r {
                         Err(Error::RateLimited(s)) if tries < 4 => {
                             tries += 1;
@@ -359,6 +446,55 @@ async fn bulk_status(State(st): State<AppState>) -> Json<Value> {
 async fn bulk_cancel(State(st): State<AppState>) -> Json<Value> {
     st.bulk.lock().unwrap_or_else(|e| e.into_inner()).cancel = true;
     ok(Value::Null)
+}
+
+fn write_zip(save_dir: &str, paths: &[String]) -> std::result::Result<String, String> {
+    use std::io::Write;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let base = std::path::Path::new(save_dir);
+    std::fs::create_dir_all(base).map_err(|e| e.to_string())?;
+    let out = base.join(format!("rbxyoinker_{stamp}.zip"));
+    let file = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let mut used: Vec<String> = Vec::new();
+    for p in paths {
+        let path = std::path::Path::new(p);
+        let Ok(bytes) = std::fs::read(path) else { continue };
+        let rel = path.strip_prefix(base).unwrap_or(path);
+        let mut name = rel.to_string_lossy().replace('\\', "/");
+        if path.strip_prefix(base).is_err() {
+            name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
+        }
+        if used.contains(&name) {
+            continue;
+        }
+        zip.start_file(name.as_str(), opts).map_err(|e| e.to_string())?;
+        zip.write_all(&bytes).map_err(|e| e.to_string())?;
+        used.push(name);
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(out.to_string_lossy().to_string())
+}
+
+async fn bulk_zip(State(st): State<AppState>) -> Json<Value> {
+    let paths: Vec<String> = {
+        let b = st.bulk.lock().unwrap_or_else(|e| e.into_inner());
+        b.items.iter().filter(|it| it.state == "ok" || it.state == "have").filter_map(|it| it.path.clone()).collect()
+    };
+    if paths.is_empty() {
+        return fail("nothing downloaded to zip yet");
+    }
+    let dir = store::load_settings().save_dir;
+    let count = paths.len();
+    match tokio::task::spawn_blocking(move || write_zip(&dir, &paths)).await {
+        Ok(Ok(path)) => ok(json!({ "path": path, "count": count })),
+        Ok(Err(e)) => fail(e),
+        Err(e) => fail(e.to_string()),
+    }
 }
 
 async fn get_history() -> Json<Value> {
@@ -452,7 +588,8 @@ async fn pick_folder() -> Json<Value> {
     let Some(dir) = picked else {
         return ok(json!({ "save_dir": Value::Null }));
     };
-    let s = store::Settings { save_dir: dir.to_string_lossy().to_string() };
+    let mut s = store::load_settings();
+    s.save_dir = dir.to_string_lossy().to_string();
     match store::save_settings(&s) {
         Ok(_) => ok(json!({ "save_dir": s.save_dir })),
         Err(e) => fail(e.to_string()),

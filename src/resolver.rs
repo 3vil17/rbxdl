@@ -20,11 +20,12 @@ async fn via_cookie(
     pool: &Pool,
     id: i64,
     place: Option<i64>,
+    version: Option<u32>,
     exclude: &[String],
 ) -> std::result::Result<(Vec<u8>, String), Option<Denial>> {
     for _ in 0..8 {
         let lease = pool.acquire(exclude).await.ok_or(None)?;
-        match rb.fetch_cookie(&lease.cookie, id, place).await {
+        match rb.fetch_cookie(&lease.cookie, id, place, version).await {
             Ok(bytes) => {
                 pool.report_ok(&lease.cookie);
                 return Ok((bytes, lease.label));
@@ -48,6 +49,7 @@ pub async fn resolve(
     api_key: Option<&str>,
     pool: &Pool,
     id: i64,
+    version: Option<u32>,
     creator: Option<(String, i64)>,
 ) -> Result<Attempt> {
     let has_cookies = pool.alive_count() > 0;
@@ -63,7 +65,7 @@ pub async fn resolve(
     let mut limited = false;
 
     if let Some(key) = api_key {
-        match rb.fetch_opencloud(key, id).await {
+        match rb.fetch_opencloud(key, id, version).await {
             Ok(bytes) => {
                 return Ok(Attempt { bytes, method: "Open Cloud API key".into(), place_id: None, account: None })
             }
@@ -82,7 +84,7 @@ pub async fn resolve(
 
     let mut tried: Vec<String> = Vec::new();
     loop {
-        match via_cookie(rb, pool, id, None, &tried).await {
+        match via_cookie(rb, pool, id, None, version, &tried).await {
             Ok((bytes, label)) => {
                 return Ok(Attempt {
                     bytes,
@@ -117,7 +119,7 @@ pub async fn resolve(
     let mut last = String::new();
     let mut count = 0;
     for p in &places {
-        match via_cookie(rb, pool, id, Some(p.place_id), &[]).await {
+        match via_cookie(rb, pool, id, Some(p.place_id), version, &[]).await {
             Ok((bytes, label)) => {
                 return Ok(Attempt {
                     bytes,

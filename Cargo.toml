@@ -1,6 +1,6 @@
 [package]
 name = "rbxyoinker"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Local Roblox asset downloader with a web UI"
 authors = ["3vil17"]
@@ -21,6 +21,9 @@ dirs = "5"
 thiserror = "2"
 open = "5"
 rfd = "0.15"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+lz4_flex = "0.11"
+zstd = "0.13"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]

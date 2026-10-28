@@ -58,7 +58,7 @@ pub fn save_cookies(list: &[String]) -> Result<()> {
 
 static HISTORY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("rbxdl");
     let _ = std::fs::create_dir_all(&dir);
@@ -73,12 +73,15 @@ pub fn default_save_dir() -> PathBuf {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub save_dir: String,
+    #[serde(default)]
+    pub sort_by_type: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             save_dir: default_save_dir().to_string_lossy().to_string(),
+            sort_by_type: false,
         }
     }
 }
@@ -129,4 +132,10 @@ pub fn clear_history() -> Result<()> {
     let path = config_dir().join("history.json");
     let _ = std::fs::remove_file(path);
     Ok(())
+}
+
+pub fn existing_download(id: i64) -> Option<HistoryEntry> {
+    load_history()
+        .into_iter()
+        .find(|h| h.id == id && std::path::Path::new(&h.path).exists())
 }

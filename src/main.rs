@@ -4,6 +4,7 @@ mod error;
 mod pool;
 mod resolver;
 mod roblox;
+mod scan;
 mod server;
 mod store;
 

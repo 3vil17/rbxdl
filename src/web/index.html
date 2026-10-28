@@ -101,6 +101,10 @@
   textarea:focus { border-color: rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.03); }
   textarea::placeholder { color: rgb(85, 85, 85); }
   .note .line { display: block; }
+  .check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.75rem; color: rgb(144,144,144); cursor: pointer; user-select: none; }
+  .check input { accent-color: var(--green); margin: 0; }
+  .st.have { background: rgba(255,255,255,0.05); color: rgb(59,186,87); }
+  #update-line { margin-top: 2px; }
   .foot { text-align: center; font-size: 0.72rem; color: rgb(102, 102, 102); margin: 6px 0 0; }
   .foot b { color: var(--green); font-weight: 500; }
   textarea.lines {
@@ -220,6 +224,7 @@
           <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01" stroke-linecap="round"/></svg>
           Runs <span class="g">locally</span>. Credentials are stored in Windows Credential Manager and never leave this machine.
         </p>
+        <p id="update-line" style="display:none"></p>
       </div>
       <nav>
         <button data-tab="download" class="active" data-i="download">Download</button>
@@ -254,6 +259,7 @@
             </div>
           </div>
           <div class="fbtns">
+            <input id="version-input" type="text" inputmode="numeric" placeholder="Version (optional, latest if empty)" autocomplete="off" style="flex:1 1 0" />
             <button class="btn" id="download-btn" data-i="download">Download</button>
           </div>
         </div>
@@ -266,7 +272,8 @@
         <ul>
           <li>Enter an <strong>asset id</strong> or paste any Roblox URL, then <strong>Fetch</strong> to preview it.</li>
           <li><strong>Download</strong> walks the authorization ladder: Open Cloud key, then each saved account directly, then the creator's own places as a place-id context.</li>
-          <li><strong>Bulk</strong> takes up to 500 ids at once. Requests rotate across your accounts and back off when Roblox rate limits one.</li>
+          <li><strong>Bulk</strong> takes up to 500 ids at once, or import a place / model file to pull every asset id out of it.</li>
+          <li>Leave <strong>Version</strong> empty for the latest, or enter a number to grab an older version.</li>
           <li>Files save to your download folder (set in <strong>Settings</strong>); every download is kept in <strong>History</strong>.</li>
           <li>Decals and images that resolve to an XML descriptor are followed once to the real image.</li>
         </ul>
@@ -278,10 +285,19 @@
       <div class="card">
         <h2 class="sect"><i data-i="layers"></i>Bulk download</h2>
         <textarea id="bulk-input" spellcheck="false" placeholder="ids or links, separated by spaces, commas or new lines (max 500)"></textarea>
-        <div class="counts"><span><b id="bulk-count">0</b> / 500 ids</span></div>
+        <div class="counts">
+          <span><b id="bulk-count">0</b> / 500 ids</span>
+          <label class="check"><input type="checkbox" id="skip-existing" checked /> Skip ones I already have</label>
+        </div>
+        <input type="file" id="scan-file" accept=".rbxl,.rbxm,.rbxlx,.rbxmx" style="display:none" />
         <div class="fbtns">
           <button class="btn" id="bulk-start" data-i="download">Download all</button>
+          <button class="btn" id="bulk-import" data-i="file">Import place / model</button>
           <button class="btn" id="bulk-cancel" data-i="square" disabled>Cancel</button>
+        </div>
+        <div class="fbtns" id="bulk-after" style="display:none">
+          <button class="btn" id="bulk-retry" data-i="refresh">Retry failed</button>
+          <button class="btn" id="bulk-zip" data-i="archive">Zip everything</button>
         </div>
         <div class="bar"><div id="bulk-bar"></div></div>
         <div class="counts" id="bulk-counts"></div>
@@ -331,6 +347,7 @@
             <button class="btn" id="save-dir-btn" data-i="save">Save</button>
           </div>
         </div>
+        <label class="check" style="margin-top:12px"><input type="checkbox" id="sort-type" /> Sort into folders by type (Audio, Image, Mesh...)</label>
         <div class="note" id="settings-note"></div>
       </div>
     </section>
@@ -372,6 +389,8 @@ const ICONS = {
   save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
   square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
   folder: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
@@ -422,7 +441,8 @@ async function doDownload() {
   if (!current) return;
   const btn = $("#download-btn"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Resolving…';
   showNote($("#dl-note"), "info", "Walking the authorization ladder…");
-  const res = await post("/api/download", { id: String(current.id) });
+  const ver = parseInt($("#version-input").value, 10);
+  const res = await post("/api/download", { id: String(current.id), version: ver > 0 ? ver : null });
   btn.disabled = false;
   setBtn(btn, "download", "Download");
   if (!res.ok) { showNote($("#dl-note"), "err", errHtml(res.error)); return; }
@@ -440,6 +460,7 @@ $("#download-btn").onclick = doDownload;
 async function loadSettings() {
   const res = await api("/api/settings"); if (!res.ok) return;
   $("#save-dir").value = res.data.save_dir;
+  $("#sort-type").checked = !!res.data.sort_by_type;
   $("#api-key").placeholder = res.data.has_key ? "saved, blank keeps it" : "Open Cloud key";
   $("#cookie-count").textContent = res.data.cookie_count ? "(" + res.data.cookie_count + " saved)" : "";
   $("#cookies").placeholder = res.data.cookie_count ? "saved, blank keeps them. Paste a new list to replace" : ".ROBLOSECURITY values, one per line";
@@ -502,11 +523,11 @@ $("#bulk-input").addEventListener("input", () => {
 });
 let bulkTimer = null;
 function renderBulk(d) {
-  const it = d.items, c = { ok: 0, error: 0, skipped: 0, waiting: 0 };
+  const it = d.items, c = { ok: 0, have: 0, error: 0, skipped: 0, waiting: 0 };
   it.forEach((x) => { if (c[x.state] != null) c[x.state]++; });
-  const done = c.ok + c.error + c.skipped;
+  const done = c.ok + c.have + c.error + c.skipped;
   $("#bulk-bar").style.width = (it.length ? (done / it.length) * 100 : 0) + "%";
-  $("#bulk-counts").innerHTML = "<span><b>" + done + "</b> / " + it.length + " done</span><span><b>" + c.ok + "</b> saved</span><span><b>" + c.error + "</b> failed</span>" +
+  $("#bulk-counts").innerHTML = "<span><b>" + done + "</b> / " + it.length + " done</span><span><b>" + c.ok + "</b> saved</span>" + (c.have ? "<span><b>" + c.have + "</b> already had</span>" : "") + "<span><b>" + c.error + "</b> failed</span>" +
     (c.waiting ? "<span><b>" + c.waiting + "</b> waiting on rate limit</span>" : "") + (c.skipped ? "<span><b>" + c.skipped + "</b> skipped</span>" : "");
   $("#bulk-rows").innerHTML = it.map((x, i) =>
     '<div class="row"><div class="main"><div class="t">' + esc(x.name || "asset") + " <span>#" + x.id + "</span></div>" +
@@ -515,7 +536,11 @@ function renderBulk(d) {
     (x.path ? '<button class="btn" data-p="' + i + '">' + svg("folder") + "</button>" : "") + "</div>").join("");
   $("#bulk-rows").querySelectorAll("button[data-p]").forEach((b) => { b.onclick = () => post("/api/reveal", { path: it[b.dataset.p].path }); });
   $("#bulk-start").disabled = d.running; $("#bulk-cancel").disabled = !d.running;
+  $("#bulk-after").style.display = !d.running && it.length ? "flex" : "none";
+  $("#bulk-retry").disabled = !(c.error + c.skipped);
+  $("#bulk-zip").disabled = !(c.ok + c.have);
 }
+function startPolling() { pollBulk(); if (!bulkTimer) bulkTimer = setInterval(pollBulk, 1000); }
 async function pollBulk() {
   const res = await api("/api/bulk/status"); if (!res.ok) return;
   renderBulk(res.data);
@@ -524,13 +549,56 @@ async function pollBulk() {
 $("#bulk-start").onclick = async () => {
   const ids = splitIds($("#bulk-input").value);
   hideNote($("#bulk-note"));
-  const res = await post("/api/bulk", { ids });
+  const res = await post("/api/bulk", { ids, skip_existing: $("#skip-existing").checked });
   if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
   showNote($("#bulk-note"), "info", "Started " + res.data.total + " assets with " + res.data.workers + " workers.");
-  pollBulk(); if (!bulkTimer) bulkTimer = setInterval(pollBulk, 1000);
+  startPolling();
+};
+$("#bulk-retry").onclick = async () => {
+  const res = await post("/api/bulk/retry", {});
+  if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
+  showNote($("#bulk-note"), "info", "Retrying " + res.data.total + " assets.");
+  startPolling();
+};
+$("#bulk-zip").onclick = async () => {
+  const btn = $("#bulk-zip"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Zipping…';
+  const res = await post("/api/bulk/zip", {});
+  setBtn(btn, "archive", "Zip everything"); btn.disabled = false;
+  if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
+  showNote($("#bulk-note"), "ok", "Zipped " + res.data.count + " files<br><code>" + esc(res.data.path) + "</code>");
+  post("/api/reveal", { path: res.data.path });
+};
+$("#bulk-import").onclick = () => $("#scan-file").click();
+$("#scan-file").onchange = async () => {
+  const f = $("#scan-file").files[0]; if (!f) return;
+  $("#scan-file").value = "";
+  showNote($("#bulk-note"), "info", "Scanning <b>" + esc(f.name) + "</b>…");
+  const r = await fetch("/api/scan-file", { method: "POST", body: f });
+  const res = await r.json().catch(() => ({ ok: false, error: "scan failed" }));
+  if (!res.ok) { showNote($("#bulk-note"), "err", esc(res.error)); return; }
+  const have = new Set(splitIds($("#bulk-input").value));
+  const fresh = res.data.ids.filter((id) => !have.has(id));
+  if (!res.data.ids.length) { showNote($("#bulk-note"), "err", "No asset ids found in " + esc(f.name) + "."); return; }
+  const box = $("#bulk-input");
+  const sep = String.fromCharCode(10);
+  box.value = (box.value.trim() ? box.value.trim() + sep : "") + fresh.join(sep);
+  box.dispatchEvent(new Event("input"));
+  const total = have.size + fresh.length;
+  showNote($("#bulk-note"), total > 500 ? "err" : "ok", "Found " + res.data.ids.length + " asset ids in <b>" + esc(f.name) + "</b>, added " + fresh.length + " new." +
+    (total > 500 ? " That's over 500, run the first 500 then paste the rest in a second batch." : ""));
 };
 $("#bulk-cancel").onclick = () => post("/api/bulk/cancel", {});
-pollBulk().then(() => { if ($("#bulk-cancel").disabled === false && !bulkTimer) bulkTimer = setInterval(pollBulk, 1000); });
+pollBulk().then(() => { if ($("#bulk-cancel").disabled === false) startPolling(); });
+$("#sort-type").onchange = async () => {
+  const res = await post("/api/settings", { sort_by_type: $("#sort-type").checked });
+  if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }
+  showNote($("#settings-note"), "ok", res.data.sort_by_type ? "New downloads go into a folder per type." : "New downloads go straight into the folder.");
+};
+api("/api/update").then((res) => {
+  if (!res.ok || !res.data.available) return;
+  const el = $("#update-line"); el.style.display = "";
+  el.innerHTML = svg("download").replace("<svg", '<svg class="ic"') + 'Update available: <a href="' + esc(res.data.url) + '" target="_blank">' + esc(res.data.latest) + "</a> (you have v" + esc(res.data.current) + ")";
+});
 $("#save-dir-btn").onclick = async () => {
   const res = await post("/api/settings", { save_dir: $("#save-dir").value });
   if (!res.ok) { showNote($("#settings-note"), "err", esc(res.error)); return; }

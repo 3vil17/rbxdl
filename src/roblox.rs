@@ -91,6 +91,20 @@ impl Roblox {
         out
     }
 
+    pub async fn latest_release(&self) -> Option<(String, String)> {
+        let v: Value = self
+            .http
+            .get("https://api.github.com/repos/3vil17/rbxyoinker/releases/latest")
+            .header("User-Agent", "rbxyoinker")
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        Some((v["tag_name"].as_str()?.to_string(), v["html_url"].as_str()?.to_string()))
+    }
+
     pub async fn cookie_info(&self, cookie: &str) -> CookieInfo {
         let auth = self
             .http
@@ -165,8 +179,11 @@ impl Roblox {
         out
     }
 
-    pub async fn fetch_opencloud(&self, api_key: &str, id: i64) -> Result<Vec<u8>> {
-        let url = format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{id}");
+    pub async fn fetch_opencloud(&self, api_key: &str, id: i64, version: Option<u32>) -> Result<Vec<u8>> {
+        let url = match version {
+            Some(v) => format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{id}/version/{v}"),
+            None => format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{id}"),
+        };
         let resp = self
             .http
             .get(&url)
@@ -191,8 +208,12 @@ impl Roblox {
         cookie: &str,
         id: i64,
         place_id: Option<i64>,
+        version: Option<u32>,
     ) -> Result<Vec<u8>> {
-        let url = format!("https://assetdelivery.roblox.com/v1/asset/?id={id}");
+        let mut url = format!("https://assetdelivery.roblox.com/v1/asset/?id={id}");
+        if let Some(v) = version {
+            url.push_str(&format!("&version={v}"));
+        }
         let mut req = self
             .http
             .get(&url)
